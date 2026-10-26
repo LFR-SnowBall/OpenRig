@@ -332,6 +332,26 @@ cmd_shell() {
     esac
 }
 
+cmd_ide() {
+    if ! docker ps --format '{{.Names}}' | grep -q "^openrig$"; then
+        cmd_up
+    fi
+    local remote_path="${1:-/workspace}"
+    # Ensure conflicting Microsoft Remote-SSH extensions in ~/.antigravity-ide do not override Antigravity's built-in OpenSSH resolver
+    rm -rf "$HOME/.antigravity-ide/extensions/ms-vscode-remote."* "$HOME/.antigravity-ide/extensions/ms-vscode.remote-"* 2>/dev/null || true
+
+    if [ -x "/Applications/Antigravity IDE.app/Contents/Resources/app/bin/antigravity-ide" ]; then
+        echo -e "${CYAN}🚀 Opening Antigravity IDE connected directly to 'openrig:${remote_path}'...${RESET}"
+        "/Applications/Antigravity IDE.app/Contents/Resources/app/bin/antigravity-ide" --folder-uri "vscode-remote://ssh-remote+openrig${remote_path}"
+    elif command -v cursor >/dev/null 2>&1; then
+        cursor --folder-uri "vscode-remote://ssh-remote+openrig${remote_path}"
+    elif command -v code >/dev/null 2>&1; then
+        code --folder-uri "vscode-remote://ssh-remote+openrig${remote_path}"
+    else
+        echo -e "${YELLOW}ℹ️ Use your IDE's 'Remote-SSH: Connect to SSH Host...' -> select 'openrig' -> open '${remote_path}'.${RESET}"
+    fi
+}
+
 cmd_service() {
     ensure_env
     local sub="${1:-help}"
@@ -695,6 +715,7 @@ case "$ACTION" in
     setup|init)      cmd_setup ;;
     up|start)        cmd_up "$@" ;;
     shell|enter)     cmd_shell ;;
+    ide|code|agy)    cmd_ide "$@" ;;
     service|svc)     cmd_service "$@" ;;
     phone|adb)       cmd_phone "$@" ;;
     sec|audit)       cmd_sec "$@" ;;
@@ -718,6 +739,7 @@ case "$ACTION" in
         echo "  ./rig setup                       -> Configure Role Profile, modules, and preferred shell"
         echo "  ./rig up                          -> Build and start your OpenRig workstation (with % progress)"
         echo "  ./rig shell                       -> Enter your terminal inside OpenRig"
+        echo "  ./rig ide                         -> Open Antigravity IDE / VS Code directly inside OpenRig"
         echo "  ./rig down                        -> Stop all containers and free 100% of Host RAM"
         echo "  ./rig uninstall                   -> Uninstall container & image (preserves ./workspace)"
         echo ""
