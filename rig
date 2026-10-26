@@ -312,14 +312,44 @@ else:
     txt = txt.rstrip() + "\n\n" + block
 open(p, "w").write(txt)
 PY
+    start_ide_bridge_watcher
     draw_progress 100 "🎉 OpenRig Workstation is 100% up and ready!" "true"
-    echo -e "\n${GREEN}👉 Terminal: ${BOLD}rig shell${RESET} | Antigravity IDE: ${BOLD}Connect to Host -> openrig -> /workspace${RESET}"
+    echo -e "\n${GREEN}👉 Terminal: ${BOLD}rig shell${RESET} | Open IDE: ${BOLD}rig ide${RESET} (or run ${BOLD}code .${RESET} / ${BOLD}agy .${RESET} inside OpenRig!)"
+}
+
+start_ide_bridge_watcher() {
+    local trigger_file="${RIG_DIR}/workspace/.openrig-ide-trigger"
+    local pid_file="$HOME/.openrig/ide-watcher.pid"
+    rm -f "$trigger_file"
+    if [ -f "$pid_file" ] && kill -0 "$(cat "$pid_file" 2>/dev/null)" 2>/dev/null; then
+        return 0
+    fi
+    (
+        while true; do
+            if [ -f "$trigger_file" ]; then
+                target_path=$(cat "$trigger_file" 2>/dev/null || echo "/workspace")
+                rm -f "$trigger_file"
+                [ -z "$target_path" ] && target_path="/workspace"
+                if [ -x "/Applications/Antigravity IDE.app/Contents/Resources/app/bin/antigravity-ide" ]; then
+                    "/Applications/Antigravity IDE.app/Contents/Resources/app/bin/antigravity-ide" --new-window --folder-uri "vscode-remote://ssh-remote+openrig${target_path}" >/dev/null 2>&1 &
+                elif command -v cursor >/dev/null 2>&1; then
+                    cursor --new-window --folder-uri "vscode-remote://ssh-remote+openrig${target_path}" >/dev/null 2>&1 &
+                elif command -v code >/dev/null 2>&1; then
+                    code --new-window --folder-uri "vscode-remote://ssh-remote+openrig${target_path}" >/dev/null 2>&1 &
+                fi
+            fi
+            sleep 0.5
+        done
+    ) </dev/null >/dev/null 2>&1 &
+    echo $! > "$pid_file"
+    disown 2>/dev/null || true
 }
 
 cmd_shell() {
     if ! docker ps --format '{{.Names}}' | grep -q "^openrig$"; then
         cmd_up
     fi
+    start_ide_bridge_watcher
     local shell_pref="ohmyzsh"
     if [ -f "$ENV_FILE" ]; then
         shell_pref=$(grep -E '^OPENRIG_SHELL=' "$ENV_FILE" | cut -d= -f2 || echo "ohmyzsh")
@@ -697,6 +727,10 @@ cmd_status() {
 
 cmd_down() {
     echo -e "${YELLOW}🛑 Stopping OpenRig containers and freeing Host OS RAM...${RESET}"
+    if [ -f "$HOME/.openrig/ide-watcher.pid" ]; then
+        kill "$(cat "$HOME/.openrig/ide-watcher.pid" 2>/dev/null)" 2>/dev/null || true
+        rm -f "$HOME/.openrig/ide-watcher.pid"
+    fi
     docker compose -f "${RIG_DIR}/docker-compose.yml" --profile services down
     echo -e "${GREEN}✅ Host OS 100% free.${RESET}"
 }

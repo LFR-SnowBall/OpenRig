@@ -103,6 +103,31 @@ echo ""
 EOF
 sudo chmod +x /usr/local/bin/rig-browser
 
+# 4b. Install Host IDE Bridge inside Container (code / agy / antigravity / cursor)
+# Allows running 'code .' or 'agy .' inside 'rig shell' to open a new Host IDE window attached to that exact folder inside OpenRig!
+sudo tee /usr/local/bin/rig-open-ide >/dev/null << 'EOF'
+#!/usr/bin/env bash
+set -e
+TARGET_ARG="${1:-.}"
+TARGET_PATH=$(realpath "$TARGET_ARG" 2>/dev/null || pwd)
+
+# 1. If running inside an active Antigravity / VS Code Remote-SSH terminal, use its native IPC hook if available
+if [ -n "${VSCODE_IPC_HOOK_CLI:-}" ]; then
+    REMOTE_CLI=$(find "$HOME/.antigravity-server" "$HOME/.vscode-server" -path "*/remote-cli/*" -type f -executable 2>/dev/null | head -n 1 || true)
+    if [ -n "$REMOTE_CLI" ]; then
+        "$REMOTE_CLI" --new-window "$TARGET_PATH" && exit 0
+    fi
+fi
+
+# 2. Trigger the Host OS IDE Watcher via /workspace/.openrig-ide-trigger
+echo "$TARGET_PATH" > /workspace/.openrig-ide-trigger
+echo "🚀 [OpenRig IDE Bridge] Opening new Antigravity IDE / VS Code window attached to 'openrig:${TARGET_PATH}'..."
+EOF
+sudo chmod +x /usr/local/bin/rig-open-ide
+for ide_cmd in code agy antigravity cursor; do
+    sudo ln -sf /usr/local/bin/rig-open-ide "/usr/local/bin/${ide_cmd}"
+done
+
 # 5. Install Mobile ADB Helper (Wireless & USB Host Bridge)
 sudo tee /usr/local/bin/rig-phone >/dev/null << 'EOF'
 #!/usr/bin/env bash
