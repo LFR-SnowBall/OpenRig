@@ -1,0 +1,707 @@
+#!/usr/bin/env bash
+# ==============================================================================
+# 🚀 OpenRig CLI — Portable Modular Dev, Sec & AI Workstation
+# Vendor: Linux Open Source S.A. de C.V. / LFR-SnowBall
+# ==============================================================================
+set -euo pipefail
+
+SOURCE="${BASH_SOURCE[0]}"
+while [ -L "$SOURCE" ]; do
+    DIR="$(cd -P "$(dirname "$SOURCE")" && pwd)"
+    SOURCE="$(readlink "$SOURCE")"
+    [[ $SOURCE != /* ]] && SOURCE="$DIR/$SOURCE"
+done
+RIG_DIR="$(cd -P "$(dirname "$SOURCE")" && pwd)"
+ENV_FILE="${RIG_DIR}/.env"
+
+# Ensure OrbStack, Homebrew and local bins are in PATH
+export PATH="${HOME}/.orbstack/bin:/Applications/OrbStack.app/Contents/MacOS/xbin:/opt/homebrew/bin:/usr/local/bin:$PATH"
+
+# Colors
+CYAN="\033[96m"
+GREEN="\033[92m"
+YELLOW="\033[93m"
+RED="\033[91m"
+BOLD="\033[1m"
+RESET="\033[0m"
+
+banner() {
+    echo -e "${CYAN}${BOLD}"
+    echo "╔══════════════════════════════════════════════════════════════════════════╗"
+    echo "║   ⚡ OPENRIG — PORTABLE MODULAR DEV, SEC & AI WORKSTATION                ║"
+    echo "║   By Linux Open Source S.A. de C.V.                                      ║"
+    echo "╚══════════════════════════════════════════════════════════════════════════╝"
+    echo -e "${RESET}"
+}
+
+ask_yn() {
+    local prompt="$1"
+    local default="${2:-y}"
+    local yn
+    if [ "$default" = "y" ]; then
+        read -r -p "$(echo -e "${BOLD}${prompt} [Y/n]: ${RESET}")" yn
+        yn="${yn:-y}"
+    else
+        read -r -p "$(echo -e "${BOLD}${prompt} [y/N]: ${RESET}")" yn
+        yn="${yn:-n}"
+    fi
+    case "$yn" in
+        [Yy]* ) echo "true" ;;
+        * ) echo "false" ;;
+    esac
+}
+
+cmd_setup() {
+    banner
+    echo -e "${BOLD}Selecciona el Rol para configurar tu máquina OpenRig:${RESET}\n"
+    echo "  1) 🐍 Backend Python     (pyenv + uv, Python multi-versión, Django, Flask, FastAPI)"
+    echo "  2) ☕ Backend JVM        (SDKMAN!, Java 21/17, Kotlin, Spring Boot, Maven, Gradle)"
+    echo "  3) 🎨 Frontend & Web     (nvm, Node LTS, Vue.js, React, Vite, pnpm, Yarn, Bun)"
+    echo "  4) 📱 Mobile & Flutter   (Flutter, FVM, Dart, Android SDK CLI, ADB Wi-Fi/USB)"
+    echo "  5) 🛡️  DevSecOps & Pentest(nmap, nuclei, trivy, semgrep, gitleaks, sqlmap, AWS CLI)"
+    echo "  6) 🦾 Full-Stack Core    (Python + JVM + Node + Cloud + Security + AI CLIs)"
+    echo "  7) 🧩 Custom (A medida)  (Elige manualmente qué módulos activar)"
+    echo ""
+    read -r -p "👉 Elige una opción [1-7] (default: 6): " choice
+    choice="${choice:-6}"
+
+    INSTALL_PYTHON=false
+    INSTALL_JVM=false
+    INSTALL_NODE=false
+    INSTALL_MOBILE=false
+    INSTALL_SWIFT=false
+    INSTALL_CLOUD=true
+    INSTALL_SEC=false
+    INSTALL_AI=true
+    OPENRIG_ROLE="custom"
+
+    case "$choice" in
+        1)
+            OPENRIG_ROLE="backend-python"
+            INSTALL_PYTHON=true
+            ;;
+        2)
+            OPENRIG_ROLE="backend-jvm"
+            INSTALL_JVM=true
+            ;;
+        3)
+            OPENRIG_ROLE="frontend"
+            INSTALL_NODE=true
+            ;;
+        4)
+            OPENRIG_ROLE="mobile"
+            INSTALL_JVM=true
+            INSTALL_NODE=true
+            INSTALL_MOBILE=true
+            ;;
+        5)
+            OPENRIG_ROLE="sec-devops"
+            INSTALL_PYTHON=true
+            INSTALL_CLOUD=true
+            INSTALL_SEC=true
+            ;;
+        6)
+            OPENRIG_ROLE="fullstack"
+            INSTALL_PYTHON=true
+            INSTALL_JVM=true
+            INSTALL_NODE=true
+            INSTALL_CLOUD=true
+            INSTALL_SEC=true
+            INSTALL_AI=true
+            ;;
+        7)
+            OPENRIG_ROLE="custom"
+            echo ""
+            echo -e "${CYAN}--- Configuración Modular Personalizada ---${RESET}"
+            INSTALL_PYTHON=$(ask_yn "🐍 ¿Incluir Python (pyenv + uv + Django/Flask/FastAPI)?" "y")
+            INSTALL_JVM=$(ask_yn "☕ ¿Incluir JVM (SDKMAN! + Java + Kotlin + Spring Boot)?" "y")
+            INSTALL_NODE=$(ask_yn "🎨 ¿Incluir Node.js (nvm + Vue.js + React + Vite)?" "y")
+            INSTALL_MOBILE=$(ask_yn "📱 ¿Incluir Mobile (Flutter + Android SDK CLI + ADB)?" "n")
+            INSTALL_SWIFT=$(ask_yn "🍎 ¿Incluir Swift Linux Toolchain (swiftly)?" "n")
+            INSTALL_CLOUD=$(ask_yn "☁️  ¿Incluir Cloud & DB CLIs (AWS CLI v2, Postgres/Redis)?" "y")
+            INSTALL_SEC=$(ask_yn "🛡️  ¿Incluir Security & Pentest (nmap, nuclei, trivy, semgrep)?" "y")
+            INSTALL_AI=$(ask_yn "🤖 ¿Incluir CLIs de IA en Sandbox (Claude, Gemini, Codex, Aider)?" "y")
+            ;;
+        *)
+            echo -e "${RED}Opción inválida.${RESET}"
+            exit 1
+            ;;
+    esac
+
+    echo ""
+    echo -e "${BOLD}Selecciona tu Terminal / Shell favorita dentro de OpenRig:${RESET}"
+    echo "  1) ⚡ Oh My Zsh + Autosuggestions (Default / Recomendado)"
+    echo "  2) 🚀 Zsh + Starship Prompt"
+    echo "  3) 🐟 Fish Shell"
+    echo "  4) 🐚 Bash Clásico"
+    read -r -p "👉 Elige tu terminal [1-4] (default: 1): " sh_choice
+    sh_choice="${sh_choice:-1}"
+    OPENRIG_SHELL="ohmyzsh"
+    case "$sh_choice" in
+        2) OPENRIG_SHELL="starship" ;;
+        3) OPENRIG_SHELL="fish" ;;
+        4) OPENRIG_SHELL="bash" ;;
+        *) OPENRIG_SHELL="ohmyzsh" ;;
+    esac
+
+    cat << EOF > "$ENV_FILE"
+# Generated by OpenRig Setup ($(date +%Y-%m-%d))
+OPENRIG_ROLE=${OPENRIG_ROLE}
+OPENRIG_SHELL=${OPENRIG_SHELL}
+INSTALL_PYTHON=${INSTALL_PYTHON}
+INSTALL_JVM=${INSTALL_JVM}
+INSTALL_NODE=${INSTALL_NODE}
+INSTALL_MOBILE=${INSTALL_MOBILE}
+INSTALL_SWIFT=${INSTALL_SWIFT}
+INSTALL_CLOUD=${INSTALL_CLOUD}
+INSTALL_SEC=${INSTALL_SEC}
+INSTALL_AI=${INSTALL_AI}
+PYTHON_DEFAULT_VERSION=3.12
+NODE_DEFAULT_VERSION=22
+JAVA_DEFAULT_VERSION=21.0.5-tem
+CONTAINER_NAME=openrig
+HOST_WORKSPACE_PATH=${RIG_DIR}/workspace
+EOF
+
+    echo ""
+    echo -e "${GREEN}✅ Archivo .env generado con el perfil '${OPENRIG_ROLE}'.${RESET}"
+    echo -e "💡 Ejecuta ahora: ${BOLD}./rig up${RESET} para construir y levantar tu estación."
+}
+
+ensure_env() {
+    if [ ! -f "$ENV_FILE" ]; then
+        echo -e "${YELLOW}ℹ️ No se encontró configuración previa (.env). Iniciando asistente...${RESET}"
+        cmd_setup
+    fi
+}
+
+MAX_PCT=0
+LAST_STAGE=""
+draw_progress() {
+    local pct="$1"
+    local msg="$2"
+    local is_milestone="${3:-false}"
+    if [ "$pct" -lt "$MAX_PCT" ]; then
+        pct="$MAX_PCT"
+    else
+        MAX_PCT="$pct"
+    fi
+    local width=28
+    local filled=$(( pct * width / 100 ))
+    local empty=$(( width - filled ))
+    local bar=""
+    for ((i=0; i<filled; i++)); do bar+="█"; done
+    for ((i=0; i<empty; i++)); do bar+="░"; done
+
+    if [ "$is_milestone" = "true" ] && [ "$msg" != "$LAST_STAGE" ]; then
+        printf "\r\033[K${GREEN}✔${RESET} ${CYAN}[%s] ${BOLD}%3d%%${RESET} — %s\n" "$bar" "$pct" "$msg"
+        LAST_STAGE="$msg"
+    else
+        printf "\r\033[K${CYAN}[%s] ${BOLD}%3d%%${RESET} — %s" "$bar" "$pct" "$msg"
+    fi
+}
+
+cmd_up() {
+    ensure_env
+    local role
+    role=$(grep -E '^OPENRIG_ROLE=' "$ENV_FILE" | cut -d= -f2 || echo "fullstack")
+    local image_name="openrig:${role}"
+    local build_log="/tmp/openrig-build.log"
+    local no_cache_flag=""
+    if [[ "${1:-}" == "--no-cache" ]]; then
+        no_cache_flag="--no-cache"
+        shift || true
+    fi
+
+    echo -e "${CYAN}${BOLD}🚀 Preparando estación OpenRig (Perfil: ${role})...${RESET}"
+    draw_progress 5 "Verificando motor de contenedores (Docker / OrbStack)..." "true"
+
+    if ! docker image inspect "$image_name" >/dev/null 2>&1 || [[ -n "$no_cache_flag" ]] || [[ "${1:-}" == "--rebuild" ]]; then
+        [[ "${1:-}" == "--rebuild" ]] && shift || true
+        echo -e "${YELLOW}📦 Construyendo imagen modular '${image_name}' (Log detallado en ${build_log})...${RESET}"
+        draw_progress 8 "📥 [0/7] Preparando imagen base Ubuntu 24.04 LTS..." "true"
+
+        set +e
+        docker compose -f "${RIG_DIR}/docker-compose.yml" --env-file "$ENV_FILE" build $no_cache_flag --progress=plain 2>&1 | tee "$build_log" | while IFS= read -r line; do
+            if [[ "$line" == *"Installing Base Workstation"* ]]; then
+                draw_progress 12 "🧱 [1/7] Instalando Sistema Base (Ubuntu + Oh My Zsh + Docker CLI)..." "true"
+            elif [[ "$line" == *"Installing Docker CLI"* ]]; then
+                draw_progress 18 "🐳 [1/7] Configurando Docker CLI para Contenedores Hermanos..." "true"
+            elif [[ "$line" == *"Base system ready"* ]]; then
+                draw_progress 22 "✅ [1/7] Sistema Base completado." "true"
+            elif [[ "$line" == *"Installing Python Module"* ]]; then
+                draw_progress 26 "🐍 [2/7] Instalando Python (uv + pyenv + Python 3.12)..." "true"
+            elif [[ "$line" == *"Installed 1 executable: django-admin"* ]]; then
+                draw_progress 34 "🐍 [2/7] Frameworks Python listos (Django, Flask, FastAPI, Ruff, Pytest)..." "true"
+            elif [[ "$line" == *"Installing JVM Module"* ]]; then
+                draw_progress 40 "☕ [3/7] Instalando JVM vía SDKMAN! (Java 21 LTS)..." "true"
+            elif [[ "$line" == *"Installing: kotlin"* ]]; then
+                draw_progress 46 "☕ [3/7] Instalando Kotlin y Spring Boot CLI..." "true"
+            elif [[ "$line" == *"Installing: gradle"* ]]; then
+                draw_progress 52 "☕ [3/7] Instalando Apache Maven y Gradle..." "true"
+            elif [[ "$line" == *"Installing Node & Frontend"* ]]; then
+                draw_progress 58 "🎨 [4/7] Instalando Node.js vía NVM + Vue.js + React + Vite..." "true"
+            elif [[ "$line" == *"Node & Frontend module installed"* ]]; then
+                draw_progress 66 "✅ [4/7] Entorno Frontend & Node.js completado." "true"
+            elif [[ "$line" == *"Installing Mobile"* ]]; then
+                draw_progress 68 "📱 [4b/7] Instalando Mobile (Flutter + Android SDK CLI + ADB)..." "true"
+            elif [[ "$line" == *"Installing Cloud"* ]]; then
+                draw_progress 72 "☁️  [5/7] Instalando Cloud & DBs (AWS CLI v2 + kubectl + Postgres/Redis)..." "true"
+            elif [[ "$line" == *"Installing Security"* ]]; then
+                draw_progress 80 "🛡️  [6/7] Instalando Suite de Seguridad (Trivy, Semgrep, Nuclei, Nmap, Gitleaks)..." "true"
+            elif [[ "$line" == *"Security & Pentesting module installed"* ]]; then
+                draw_progress 87 "✅ [6/7] Suite de Seguridad y Pentesting lista." "true"
+            elif [[ "$line" == *"Installing AI Coding"* ]]; then
+                draw_progress 90 "🤖 [7/7] Instalando Agentes de IA en Sandbox (Claude, Gemini, Codex, Aider)..." "true"
+            elif [[ "$line" == *"exporting to image"* ]]; then
+                draw_progress 95 "💾 Empaquetando capas de la imagen en disco..." "true"
+            elif [[ "$line" == *"unpacking to"* ]]; then
+                draw_progress 98 "📂 Desempaquetando imagen final..." "true"
+            fi
+        done
+        local build_rc="${PIPESTATUS[0]}"
+        set -e
+        if [ "$build_rc" -ne 0 ]; then
+            echo ""
+            echo -e "${RED}❌ Error durante la construcción. Revisa las últimas líneas de ${build_log}:${RESET}"
+            tail -n 25 "$build_log"
+            exit "$build_rc"
+        fi
+    else
+        draw_progress 60 "⚡ Imagen '${image_name}' detectada en caché local..." "true"
+    fi
+
+    draw_progress 99 "🔌 Levantando red 'openrig-net', volúmenes de caché y puente SSH..." "true"
+    docker compose -f "${RIG_DIR}/docker-compose.yml" --env-file "$ENV_FILE" up -d "$@" >/dev/null 2>&1
+    # Sync ONLY safe public SSH files (*.pub, known_hosts, allowed_signers) — never mount or copy private keys
+    docker exec openrig mkdir -p /home/rig/.ssh >/dev/null 2>&1 || true
+    for pub_file in "$HOME/.ssh/"*.pub "$HOME/.ssh/known_hosts" "$HOME/.ssh/allowed_signers"; do
+        [ -f "$pub_file" ] && docker cp "$pub_file" "openrig:/home/rig/.ssh/" >/dev/null 2>&1 || true
+    done
+    docker exec -u root openrig bash -c "chown -R rig:rig /home/rig/.ssh && chmod 700 /home/rig/.ssh" >/dev/null 2>&1 || true
+    draw_progress 100 "🎉 ¡Estación OpenRig 100% activa y lista!" "true"
+    echo -e "\n${GREEN}👉 Entra a tu estación ejecutando: ${BOLD}rig shell${RESET} (o ${BOLD}./rig shell${RESET})"
+}
+
+cmd_shell() {
+    if ! docker ps --format '{{.Names}}' | grep -q "^openrig$"; then
+        cmd_up
+    fi
+    local shell_pref="ohmyzsh"
+    if [ -f "$ENV_FILE" ]; then
+        shell_pref=$(grep -E '^OPENRIG_SHELL=' "$ENV_FILE" | cut -d= -f2 || echo "ohmyzsh")
+    fi
+    echo -e "${CYAN}🔌 Conectando a la terminal de OpenRig (${shell_pref} -> /workspace)...${RESET}"
+    case "$shell_pref" in
+        fish) docker exec -it openrig fish -l ;;
+        bash) docker exec -it openrig bash -l ;;
+        *)    docker exec -it openrig zsh -l ;;
+    esac
+}
+
+cmd_service() {
+    ensure_env
+    local sub="${1:-help}"
+    shift || true
+    case "$sub" in
+        up)
+            echo -e "${CYAN}🐳 Levantando contenedores hermanos al lado de OpenRig: $*${RESET}"
+            docker compose -f "${RIG_DIR}/docker-compose.yml" --env-file "$ENV_FILE" up -d "$@"
+            ;;
+        down)
+            docker compose -f "${RIG_DIR}/docker-compose.yml" --env-file "$ENV_FILE" stop "$@"
+            ;;
+        *)
+            echo "Uso: ./rig service up [postgres|redis|localstack]"
+            echo "     ./rig service down [postgres|redis|localstack]"
+            ;;
+    esac
+}
+
+TTY_FLAG=""
+[ -t 0 ] && TTY_FLAG="-it" || TTY_FLAG="-i"
+
+cmd_phone() {
+    docker exec $TTY_FLAG openrig rig-phone "$@"
+}
+
+cmd_sec() {
+    docker exec $TTY_FLAG openrig rig-sec "${1:-/workspace}"
+}
+
+cmd_vpn() {
+    docker exec $TTY_FLAG openrig rig-vpn "$@"
+}
+
+cmd_profile() {
+    docker exec $TTY_FLAG openrig rig-profile "$@"
+}
+
+cmd_share() {
+    docker exec $TTY_FLAG openrig rig-share "${1:-8000}"
+}
+
+cmd_snapshot() {
+    local sub="${1:-list}"
+    shift || true
+    case "$sub" in
+        save|create)
+            local tag="${1:?Uso: ./rig snapshot save <nombre-snapshot>}"
+            echo -e "${CYAN}📸 Guardando snapshot de tu estación OpenRig como 'openrig-snapshot:${tag}'...${RESET}"
+            docker commit openrig "openrig-snapshot:${tag}" >/dev/null
+            echo -e "${GREEN}✅ Snapshot 'openrig-snapshot:${tag}' guardado con éxito.${RESET}"
+            ;;
+        list|ls)
+            echo -e "${CYAN}📸 Snapshots disponibles (Time Machine):${RESET}"
+            docker images "openrig-snapshot" --format "table {{.Repository}}:{{.Tag}}\t{{.CreatedSince}}\t{{.Size}}"
+            ;;
+        restore)
+            local tag="${1:?Uso: ./rig snapshot restore <nombre-snapshot>}"
+            ensure_env
+            local role
+            role=$(grep -E '^OPENRIG_ROLE=' "$ENV_FILE" | cut -d= -f2 || echo "fullstack")
+            echo -e "${YELLOW}⏪ Restaurando estación OpenRig al snapshot 'openrig-snapshot:${tag}'...${RESET}"
+            docker tag "openrig-snapshot:${tag}" "openrig:${role}"
+            docker compose -f "${RIG_DIR}/docker-compose.yml" --env-file "$ENV_FILE" up -d --force-recreate
+            echo -e "${GREEN}✅ Estación restaurada al estado '${tag}'.${RESET}"
+            ;;
+        export)
+            local tag="${1:?Uso: ./rig snapshot export <nombre-snapshot> [archivo.tar.gz]}"
+            local out="${2:-openrig-${tag}.tar.gz}"
+            echo -e "${CYAN}📦 Exportando snapshot '${tag}' a ${out}...${RESET}"
+            docker save "openrig-snapshot:${tag}" | gzip > "$out"
+            echo -e "${GREEN}✅ Exportado en: ${out}${RESET}"
+            ;;
+        import)
+            local file="${1:?Uso: ./rig snapshot import <archivo.tar.gz> [nombre-snapshot]}"
+            local tag="${2:-imported}"
+            echo -e "${CYAN}📥 Importando snapshot desde ${file}...${RESET}"
+            gunzip -c "$file" | docker load
+            echo -e "${GREEN}✅ Snapshot importado.${RESET}"
+            ;;
+        *)
+            echo "📸 OpenRig Time Machine (rig snapshot):"
+            echo "  ./rig snapshot save <tag>              -> Congela el estado actual de tu estación"
+            echo "  ./rig snapshot list                    -> Lista tus snapshots guardados"
+            echo "  ./rig snapshot restore <tag>           -> Regresa tu estación en el tiempo al snapshot"
+            echo "  ./rig snapshot export <tag> [file.tgz] -> Empaqueta tu estación para llevarla en USB/Red"
+            echo "  ./rig snapshot import <file.tgz>       -> Importa una estación empaquetada"
+            ;;
+    esac
+}
+
+get_hardware_id() {
+    local raw=""
+    if command -v ioreg >/dev/null 2>&1; then
+        raw=$(ioreg -rd1 -c IOPlatformExpertDevice | awk -F\" '/IOPlatformUUID/{print $4}')
+    elif [ -f /etc/machine-id ]; then
+        raw=$(cat /etc/machine-id)
+    else
+        raw="$(hostname)-$(uname -m)"
+    fi
+    printf "%s" "$raw" | shasum -a 256 | awk '{print $1}'
+}
+
+cmd_device() {
+    docker exec $TTY_FLAG openrig rig-device "$@"
+}
+
+cmd_join() {
+    local server="${1:?Uso: rig join <servidor:7070> --token <rig_inv_...>}"
+    shift || true
+    local token=""
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --token|-t) token="$2"; shift 2 ;;
+            *) token="$1"; shift ;;
+        esac
+    done
+    if [ -z "$token" ]; then
+        echo -e "${RED}❌ Falta el token de invitación (--token rig_inv_...).${RESET}"
+        exit 1
+    fi
+
+    local hw_id
+    hw_id=$(get_hardware_id)
+    local dev_name
+    dev_name=$(hostname -s 2>/dev/null || hostname)
+    local key_dir="$HOME/.openrig"
+    mkdir -p "$key_dir"
+    chmod 700 "$key_dir"
+    local key_file="$key_dir/device_ed25519"
+    local askpass_file="$key_dir/hw-askpass.sh"
+
+    cat << 'ASKPASS' > "$askpass_file"
+#!/usr/bin/env bash
+if [[ "$OSTYPE" == "darwin"* ]]; then
+    raw=$(ioreg -rd1 -c IOPlatformExpertDevice | awk -F'"' '/IOPlatformUUID/{print $4}')
+elif [ -f /sys/class/dmi/id/product_uuid ]; then
+    raw=$(cat /sys/class/dmi/id/product_uuid 2>/dev/null || cat /etc/machine-id)
+elif [ -f /etc/machine-id ]; then
+    raw=$(cat /etc/machine-id)
+else
+    raw="$(hostname)-$(uname -m)"
+fi
+printf "%s" "$raw" | shasum -a 256 | awk '{print $1}'
+ASKPASS
+    chmod 700 "$askpass_file"
+
+    # Regenerate hardware-encrypted key so it cannot be decrypted on any other motherboard
+    rm -f "$key_file" "${key_file}.pub"
+    ssh-keygen -t ed25519 -f "$key_file" -N "$hw_id" -C "openrig-bound-${dev_name}" >/dev/null
+    local pubkey
+    pubkey=$(cat "${key_file}.pub")
+
+    echo -e "${CYAN}🔐 Casando este equipo (${dev_name} | HW-ID derivado en RAM) con OpenRig-Server (${server})...${RESET}"
+    local resp
+    resp=$(curl -sS -X POST "http://${server}/enroll" \
+        -H "Content-Type: application/json" \
+        -d "{\"token\":\"${token}\",\"public_key\":\"${pubkey}\",\"hardware_id\":\"${hw_id}\",\"device_name\":\"${dev_name}\"}")
+
+    if ! echo "$resp" | grep -q '"status": *"enrolled"'; then
+        echo -e "${RED}❌ Error al registrar equipo: ${resp}${RESET}"
+        exit 1
+    fi
+
+    local user ssh_port kc_secret kc_uri
+    user=$(echo "$resp" | python3 -c "import sys,json; print(json.load(sys.stdin)['username'])")
+    ssh_port=$(echo "$resp" | python3 -c "import sys,json; print(json.load(sys.stdin)['ssh_port'])")
+    kc_secret=$(echo "$resp" | python3 -c "import sys,json; print(json.load(sys.stdin)['keychain_secret'])")
+    kc_uri=$(echo "$resp" | python3 -c "import sys,json; print(json.load(sys.stdin)['keychain_uri'])")
+    local host_ip="${server%:*}"
+
+    mkdir -p "$HOME/.ssh"
+    touch "$HOME/.ssh/config"
+    # Remove previous entry for openrig-${user} if exists
+    python3 - "$HOME/.ssh/config" "openrig-${user}" << 'PY'
+import re, sys
+p, alias = sys.argv[1], sys.argv[2]
+txt = open(p).read()
+txt = re.sub(rf"\nHost {re.escape(alias)}\n(?:    .*\n)*", "\n", txt)
+open(p, "w").write(txt)
+PY
+
+    cat << EOF >> "$HOME/.ssh/config"
+
+Host openrig-${user}
+    HostName ${host_ip}
+    Port ${ssh_port}
+    User rig
+    IdentityFile ${key_file}
+    IdentitiesOnly yes
+    StrictHostKeyChecking accept-new
+    LocalForward 3000 127.0.0.1:3000
+    LocalForward 5173 127.0.0.1:5173
+    LocalForward 8000 127.0.0.1:8000
+    LocalForward 8080 127.0.0.1:8080
+EOF
+
+    echo -e "${GREEN}✅ ¡Equipo '${dev_name}' casado exitosamente y equipos anteriores desvinculados!${RESET}"
+    echo -e "   • Llave privada cifrada con el chip de esta placa madre (inútil si la copian a otra PC)."
+    echo -e "   • Conéctate en 1 segundo con: ${BOLD}rig connect openrig-${user}${RESET}"
+    echo -e "   • Keychain TOTP (para Modo Invitado 'rig guest' en otra PC): ${YELLOW}${kc_secret}${RESET}"
+    echo -e "   • URI 1Password / Authenticator: ${kc_uri}"
+}
+
+cmd_guest() {
+    local server="${1:?Uso: rig guest <servidor:7070> --user <usuario> [--code <6-digitos-llavero>]}"
+    shift || true
+    local user=""
+    local code=""
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --user|-u) user="$2"; shift 2 ;;
+            --code|-c) code="$2"; shift 2 ;;
+            *) [ -z "$user" ] && user="$1"; shift ;;
+        esac
+    done
+
+    if [ -z "$user" ]; then
+        read -r -p "👤 Usuario en OpenRig-Server: " user
+    fi
+    if [ -z "$code" ]; then
+        read -r -p "🔐 Código de 6 dígitos de tu Llavero (1Password / Authenticator): " code
+    fi
+
+    local tmp_dir
+    tmp_dir=$(mktemp -d /tmp/rig-guest-XXXXXX)
+    trap 'rm -rf "$tmp_dir"' EXIT INT TERM
+
+    ssh-keygen -t ed25519 -f "${tmp_dir}/guest_key" -N "" -C "guest-ephemeral" >/dev/null
+    local pubkey
+    pubkey=$(cat "${tmp_dir}/guest_key.pub")
+
+    echo -e "${CYAN}🔑 Verificando código de Llavero con OpenRig-Server (${server})...${RESET}"
+    local resp
+    resp=$(curl -sS -X POST "http://${server}/guest" \
+        -H "Content-Type: application/json" \
+        -d "{\"username\":\"${user}\",\"code\":\"${code}\",\"temp_public_key\":\"${pubkey}\"}")
+
+    if ! echo "$resp" | grep -q '"status": *"guest_authorized"'; then
+        echo -e "${RED}❌ Acceso denegado: ${resp}${RESET}"
+        exit 1
+    fi
+
+    local ssh_port
+    ssh_port=$(echo "$resp" | python3 -c "import sys,json; print(json.load(sys.stdin)['ssh_port'])")
+    local host_ip="${server%:*}"
+
+    echo -e "${GREEN}✅ Llavero verificado. Abriendo Sesión de Invitado (Session Takeover -> /workspace)...${RESET}"
+    echo -e "${YELLOW}   (Cero llaves guardadas en esta computadora; al salir se destruye el pase temporal)${RESET}"
+    ssh -p "$ssh_port" \
+        -i "${tmp_dir}/guest_key" \
+        -o IdentitiesOnly=yes \
+        -o StrictHostKeyChecking=no \
+        -o UserKnownHostsFile=/dev/null \
+        "rig@${host_ip}"
+}
+
+cmd_connect() {
+    local target="${1:?Uso: ./rig connect <openrig-usuario | host:puerto>}"
+    shift || true
+    if grep -q "^Host ${target}$" "$HOME/.ssh/config" 2>/dev/null; then
+        local hw_id dev_name
+        hw_id=$(get_hardware_id)
+        dev_name=$(hostname -s 2>/dev/null || hostname)
+        echo -e "${CYAN}⚡ Conectando a '${target}' con verificación dinámica de Placa Madre (RAM) y Session Takeover...${RESET}"
+        DISPLAY=":0" \
+        SSH_ASKPASS="$HOME/.openrig/hw-askpass.sh" \
+        SSH_ASKPASS_REQUIRE=force \
+        ssh -o SetEnv="OPENRIG_HW_ID=${hw_id} OPENRIG_DEVICE_NAME=${dev_name}" "$target" "$@"
+        return 0
+    fi
+    local host="${target%:*}"
+    local port="${target##*:}"
+    [ "$host" = "$port" ] && port="2201"
+    local alias_name="${1:-openrig-remote}"
+
+    mkdir -p "$HOME/.ssh"
+    touch "$HOME/.ssh/config"
+    if ! grep -q "Host ${alias_name}" "$HOME/.ssh/config" 2>/dev/null; then
+        cat << EOF >> "$HOME/.ssh/config"
+
+Host ${alias_name}
+    HostName ${host}
+    Port ${port}
+    User rig
+    ForwardAgent yes
+    LocalForward 3000 127.0.0.1:3000
+    LocalForward 5173 127.0.0.1:5173
+    LocalForward 8000 127.0.0.1:8000
+    LocalForward 8080 127.0.0.1:8080
+EOF
+        echo -e "${GREEN}✅ Host '${alias_name}' registrado en ~/.ssh/config (listo para VS Code / Antigravity Remote-SSH).${RESET}"
+    fi
+
+    echo -e "${CYAN}🌐 Conectando como Cliente Ligero a OpenRig Server (${host}:${port})...${RESET}"
+    ssh -A -p "$port" \
+        -L 3000:127.0.0.1:3000 \
+        -L 5173:127.0.0.1:5173 \
+        -L 8000:127.0.0.1:8000 \
+        -L 8080:127.0.0.1:8080 \
+        "rig@${host}"
+}
+
+cmd_request() {
+    docker exec $TTY_FLAG openrig rig-request "$@"
+}
+
+cmd_lock() {
+    echo -e "${YELLOW}🔒 Activando Modo Sandbox Anti-Malware en 'openrig'...${RESET}"
+    docker exec -u root openrig bash -c '
+        if [ -S /var/run/docker.sock ]; then
+            chown root:root /var/run/docker.sock
+            chmod 600 /var/run/docker.sock
+        fi
+        gpasswd -d rig docker >/dev/null 2>&1 || true
+        gpasswd -d rig sudo >/dev/null 2>&1 || true
+        rm -f /etc/sudoers.d/rig*
+        sed -i "/^rig ALL=/d" /etc/sudoers 2>/dev/null || true
+    '
+    echo -e "${GREEN}✅ Estación ENJAULADA (Modo Sandbox activo):${RESET}"
+    echo -e "   • Socket de Docker bloqueado (0600 root:root)."
+    echo -e "   • Permisos sudo revocados dentro del contenedor."
+    echo -e "   • Seguro para probar repositorios desconocidos o correr npm/pip install de terceros."
+    echo -e "   👉 Para restaurar privilegios desde tu Mac/PC ejecuta: ${BOLD}rig unlock${RESET}"
+}
+
+cmd_unlock() {
+    echo -e "${CYAN}🔓 Restaurando privilegios de estación en 'openrig' desde el Host...${RESET}"
+    docker exec -u root openrig bash -c '
+        if [ -S /var/run/docker.sock ]; then
+            chmod 666 /var/run/docker.sock
+        fi
+        usermod -aG sudo rig 2>/dev/null || true
+        echo "rig ALL=(ALL) NOPASSWD:ALL" > /etc/sudoers.d/rig
+        chmod 440 /etc/sudoers.d/rig
+    '
+    echo -e "${GREEN}✅ Privilegios de Docker y sudo restaurados en 'openrig'.${RESET}"
+}
+
+cmd_status() {
+    banner
+    docker ps --filter "network=openrig-net" --format "table {{.Names}}\t{{.Image}}\t{{.Status}}\t{{.Ports}}"
+}
+
+cmd_down() {
+    echo -e "${YELLOW}🛑 Apagando contenedores de OpenRig y liberando RAM del sistema...${RESET}"
+    docker compose -f "${RIG_DIR}/docker-compose.yml" --profile services down
+    echo -e "${GREEN}✅ Máquina anfitrión 100% libre.${RESET}"
+}
+
+cmd_uninstall() {
+    echo -e "${YELLOW}🗑️  Desinstalando contenedor, imagen y caché de construcción de OpenRig...${RESET}"
+    docker compose -f "${RIG_DIR}/docker-compose.yml" --profile services down --rmi all -v 2>/dev/null || true
+    docker builder prune -f >/dev/null 2>&1 || true
+    echo -e "${GREEN}✅ OpenRig desinstalado por completo (tus proyectos en ./workspace siguen intactos).${RESET}"
+}
+
+ACTION="${1:-help}"
+shift || true
+
+case "$ACTION" in
+    setup|init)      cmd_setup ;;
+    up|start)        cmd_up "$@" ;;
+    shell|enter)     cmd_shell ;;
+    service|svc)     cmd_service "$@" ;;
+    phone|adb)       cmd_phone "$@" ;;
+    sec|audit)       cmd_sec "$@" ;;
+    vpn)             cmd_vpn "$@" ;;
+    profile|prof)    cmd_profile "$@" ;;
+    snapshot|snap)   cmd_snapshot "$@" ;;
+    share|tunnel)    cmd_share "$@" ;;
+    device|dev)      cmd_device "$@" ;;
+    request|req)     cmd_request "$@" ;;
+    lock|sandbox)    cmd_lock ;;
+    unlock)          cmd_unlock ;;
+    join|enroll)     cmd_join "$@" ;;
+    guest)           cmd_guest "$@" ;;
+    connect|remote)  cmd_connect "$@" ;;
+    status|ps)       cmd_status ;;
+    down|stop)       cmd_down ;;
+    uninstall|nuke)  cmd_uninstall ;;
+    *)
+        banner
+        echo -e "${BOLD}Comandos principales:${RESET}"
+        echo "  ./rig setup                       -> Configura tu Rol, módulos y terminal favorita"
+        echo "  ./rig up                          -> Construye e inicia tu estación OpenRig (con % de progreso)"
+        echo "  ./rig shell                       -> Entra a tu terminal dentro de OpenRig"
+        echo "  ./rig down                        -> Apaga todo y libera el 100% de la RAM de tu computadora"
+        echo "  ./rig uninstall                   -> Desinstala contenedor e imagen (conserva ./workspace)"
+        echo ""
+        echo -e "${BOLD}Diferenciadores & Herramientas Avanzadas:${RESET}"
+        echo "  ./rig profile [create|use|list]   -> Aísla identidad Git y AWS por cliente/empresa"
+        echo "  ./rig vpn [gp|ovpn|wg|status|down]-> VPN aislada en contenedor (GlobalProtect, OpenVPN, WireGuard)"
+        echo "  ./rig snapshot [save|restore|list]-> Time Machine: congela o restaura el estado de tu estación"
+        echo "  ./rig share <puerto>              -> Expone un puerto local por HTTPS público para demos/webhooks"
+        echo "  ./rig service up <nombre>         -> Levanta contenedores hermanos (postgres, redis, localstack)"
+        echo "  ./rig phone connect <IP:PORT>     -> Conecta tu celular Android por Wi-Fi a OpenRig"
+        echo "  ./rig sec [ruta]                  -> Auditoría de seguridad (Gitleaks + Trivy + Semgrep)"
+        echo "  ./rig lock / ./rig unlock         -> Modo Sandbox Anti-Malware (bloquea Docker socket y sudo)"
+        echo "  ./rig join <srv:7070> --token <t> -> Casa tu equipo por Hardware UUID con un OpenRig-Server"
+        echo "  ./rig connect <openrig-usuario>   -> Entra a tu sesión remota (con Session Takeover)"
+        echo "  ./rig guest <srv:7070> --user <u> -> Modo Invitado sin dejar rastro usando tu Llavero (TOTP)"
+        echo "  ./rig request <ram> <cpus> [razon]-> Solicita al Administrador más RAM o CPUs virtuales"
+        echo "  ./rig device [list|revoke|keychain]-> Administra equipos casados y tu Llavero TOTP"
+        ;;
+esac

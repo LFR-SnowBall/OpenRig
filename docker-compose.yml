@@ -1,0 +1,130 @@
+name: openrig
+
+services:
+  # ============================================================================
+  # 🖥️ OpenRig Primary Workstation Container
+  # ============================================================================
+  openrig:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+      args:
+        INSTALL_PYTHON: ${INSTALL_PYTHON:-true}
+        INSTALL_JVM: ${INSTALL_JVM:-true}
+        INSTALL_NODE: ${INSTALL_NODE:-true}
+        INSTALL_MOBILE: ${INSTALL_MOBILE:-false}
+        INSTALL_SWIFT: ${INSTALL_SWIFT:-false}
+        INSTALL_CLOUD: ${INSTALL_CLOUD:-true}
+        INSTALL_SEC: ${INSTALL_SEC:-true}
+        INSTALL_AI: ${INSTALL_AI:-true}
+        PYTHON_DEFAULT_VERSION: ${PYTHON_DEFAULT_VERSION:-3.12}
+        NODE_DEFAULT_VERSION: ${NODE_DEFAULT_VERSION:-22}
+        JAVA_DEFAULT_VERSION: ${JAVA_DEFAULT_VERSION:-21.0.5-tem}
+    image: openrig:${OPENRIG_ROLE:-custom}
+    container_name: ${CONTAINER_NAME:-openrig}
+    hostname: openrig
+    tty: true
+    stdin_open: true
+    cap_add:
+      - NET_ADMIN
+    devices:
+      - /dev/net/tun:/dev/net/tun
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    environment:
+      - TERM=xterm-256color
+      - COLORTERM=truecolor
+      - SSH_AUTH_SOCK=/ssh-agent
+      - OPENRIG_SHELL=${OPENRIG_SHELL:-ohmyzsh}
+    ports:
+      # Bound strictly to 127.0.0.1 (Host loopback only — invisible on public Wi-Fi / LAN)
+      - "127.0.0.1:3000:3000"   # React / Next / Flutter Web Server
+      - "127.0.0.1:5173:5173"   # Vite / Vue.js
+      - "127.0.0.1:8000:8000"   # Django / FastAPI / Python HTTP
+      - "127.0.0.1:8080:8080"   # Spring Boot / Kotlin / Tomcat
+      - "127.0.0.1:5000:5000"   # Flask
+      - "127.0.0.1:5005:5005"   # Java JDWP Remote Debug
+      - "127.0.0.1:5678:5678"   # Python debugpy Remote Debug
+      - "127.0.0.1:9229:9229"   # Node.js Inspector Debug
+    volumes:
+      # 1. Projects Workspace (shared with Host OS)
+      - ${HOST_WORKSPACE_PATH:-./workspace}:/workspace
+      # 2. Docker Socket for launching Sibling Containers alongside OpenRig (0 extra RAM daemon)
+      - /var/run/docker.sock:/var/run/docker.sock
+      # 3. Host SSH Agent & Git Config (Zero ~/.ssh directory mount — private keys never enter the container)
+      - ${HOME}/.gitconfig:/tmp/host-gitconfig:ro
+      - ${SSH_AUTH_SOCK:-/dev/null}:/ssh-agent
+      # 4. Persistent Caches & Credentials across container rebuilds
+      - openrig-maven-cache:/home/rig/.m2
+      - openrig-gradle-cache:/home/rig/.gradle
+      - openrig-uv-cache:/home/rig/.cache/uv
+      - openrig-npm-cache:/home/rig/.npm
+      - openrig-pnpm-store:/home/rig/.local/share/pnpm
+      - openrig-pub-cache:/home/rig/.pub-cache
+      - openrig-aws-config:/home/rig/.aws
+      - openrig-ai-config:/home/rig/.config
+      - openrig-profiles:/home/rig/.openrig-profiles
+    networks:
+      - openrig-net
+
+  # ============================================================================
+  # 🐳 Optional Sibling Services (Run ALONGSIDE OpenRig on 'openrig-net')
+  # Start on demand: ./rig service up postgres redis
+  # ============================================================================
+  postgres:
+    image: postgres:16-alpine
+    container_name: openrig-postgres
+    profiles: ["services", "postgres"]
+    environment:
+      POSTGRES_USER: dev
+      POSTGRES_PASSWORD: devpassword
+      POSTGRES_DB: appdb
+    ports:
+      - "127.0.0.1:5432:5432"
+    volumes:
+      - openrig-postgres-data:/var/lib/postgresql/data
+    networks:
+      - openrig-net
+
+  redis:
+    image: redis:7-alpine
+    container_name: openrig-redis
+    profiles: ["services", "redis"]
+    ports:
+      - "127.0.0.1:6379:6379"
+    volumes:
+      - openrig-redis-data:/data
+    networks:
+      - openrig-net
+
+  localstack:
+    image: localstack/localstack:latest
+    container_name: openrig-localstack
+    profiles: ["services", "localstack"]
+    ports:
+      - "127.0.0.1:4566:4566"
+    environment:
+      - SERVICES=s3,sqs,sns,dynamodb,secretsmanager,ssm,lambda
+    volumes:
+      - openrig-localstack-data:/var/lib/localstack
+    networks:
+      - openrig-net
+
+networks:
+  openrig-net:
+    name: openrig-net
+    driver: bridge
+
+volumes:
+  openrig-maven-cache:
+  openrig-gradle-cache:
+  openrig-uv-cache:
+  openrig-npm-cache:
+  openrig-pnpm-store:
+  openrig-pub-cache:
+  openrig-aws-config:
+  openrig-ai-config:
+  openrig-profiles:
+  openrig-postgres-data:
+  openrig-redis-data:
+  openrig-localstack-data:

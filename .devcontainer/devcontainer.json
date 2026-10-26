@@ -1,0 +1,29 @@
+{
+  "name": "OpenRig Portable Workstation",
+  "dockerComposeFile": ["../docker-compose.yml"],
+  "service": "openrig",
+  "workspaceFolder": "/workspace",
+  "remoteUser": "rig",
+  "customizations": {
+    "vscode": {
+      "settings": {
+        "terminal.integrated.defaultProfile.linux": "zsh"
+      },
+      "extensions": [
+        "ms-python.python",
+        "ms-python.debugpy",
+        "charliermarsh.ruff",
+        "vscjava.vscode-java-pack",
+        "vmware.vscode-boot-dev-pack",
+        "fwcd.kotlin",
+        "Vue.volar",
+        "dbaeumer.vscode-eslint",
+        "esbenp.prettier-vscode",
+        "Dart-Code.flutter",
+        "ms-azuretools.vscode-docker"
+      ]
+    }
+  },
+  "forwardPorts": [3000, 5000, 5173, 8000, 8080],
+  "shutdownAction": "stopCompose"
+}
