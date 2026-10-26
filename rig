@@ -271,16 +271,49 @@ cmd_up() {
         draw_progress 60 "⚡ Image '${image_name}' found in local cache..." "true"
     fi
 
-    draw_progress 99 "🔌 Starting 'openrig-net' network, cache volumes, and SSH agent bridge..." "true"
+    draw_progress 99 "🔌 Starting 'openrig-net' network, cache volumes, and IDE Remote-SSH bridge..." "true"
     docker compose -f "${RIG_DIR}/docker-compose.yml" --env-file "$ENV_FILE" up -d "$@" >/dev/null 2>&1
     # Sync ONLY safe public SSH files (*.pub, known_hosts, allowed_signers) — never mount or copy private keys
     docker exec openrig mkdir -p /home/rig/.ssh >/dev/null 2>&1 || true
     for pub_file in "$HOME/.ssh/"*.pub "$HOME/.ssh/known_hosts" "$HOME/.ssh/allowed_signers"; do
         [ -f "$pub_file" ] && docker cp "$pub_file" "openrig:/home/rig/.ssh/" >/dev/null 2>&1 || true
     done
-    docker exec -u root openrig bash -c "chown -R rig:rig /home/rig/.ssh && chmod 700 /home/rig/.ssh" >/dev/null 2>&1 || true
+    # Configure zero-popup Local IDE SSH Bridge (Host 'openrig' on 127.0.0.1:2222 for Antigravity / VS Code / Cursor)
+    mkdir -p "$HOME/.openrig" "$HOME/.ssh"
+    chmod 700 "$HOME/.openrig" "$HOME/.ssh"
+    local ide_key="$HOME/.openrig/local_ide_ed25519"
+    if [ ! -f "$ide_key" ]; then
+        ssh-keygen -t ed25519 -f "$ide_key" -N "" -C "openrig-local-ide" >/dev/null 2>&1
+    fi
+    local ide_pub
+    ide_pub=$(cat "${ide_key}.pub")
+    docker exec -u root openrig bash -c "mkdir -p /etc/openrig /home/rig/.ssh /run/sshd && echo '${ide_pub}' > /etc/openrig/authorized_keys && echo '${ide_pub}' > /home/rig/.ssh/authorized_keys && chown root:root /etc/openrig/authorized_keys && chmod 644 /etc/openrig/authorized_keys && chown -R rig:rig /home/rig/.ssh && chmod 700 /home/rig/.ssh && chmod 600 /home/rig/.ssh/authorized_keys && (pgrep -x sshd >/dev/null || /usr/sbin/sshd)" >/dev/null 2>&1 || true
+    touch "$HOME/.ssh/config"
+    python3 - "$HOME/.ssh/config" "$ide_key" << 'PY'
+import re, sys
+p, key_file = sys.argv[1], sys.argv[2]
+txt = open(p).read()
+txt = re.sub(r"\n?Host openrig\n(?:    .*\n)*", "\n", txt)
+block = f"""Host openrig
+    HostName 127.0.0.1
+    Port 2222
+    User rig
+    IdentityFile {key_file}
+    IdentityAgent none
+    IdentitiesOnly yes
+    StrictHostKeyChecking no
+    UserKnownHostsFile /dev/null
+    LogLevel ERROR
+
+"""
+if "Host *" in txt:
+    txt = txt.replace("Host *", block + "Host *", 1)
+else:
+    txt = txt.rstrip() + "\n\n" + block
+open(p, "w").write(txt)
+PY
     draw_progress 100 "🎉 OpenRig Workstation is 100% up and ready!" "true"
-    echo -e "\n${GREEN}👉 Enter your workstation by running: ${BOLD}rig shell${RESET} (or ${BOLD}./rig shell${RESET})"
+    echo -e "\n${GREEN}👉 Terminal: ${BOLD}rig shell${RESET} | Antigravity IDE: ${BOLD}Connect to Host -> openrig -> /workspace${RESET}"
 }
 
 cmd_shell() {

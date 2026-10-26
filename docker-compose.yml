@@ -36,8 +36,10 @@ services:
       - COLORTERM=truecolor
       - SSH_AUTH_SOCK=/ssh-agent
       - OPENRIG_SHELL=${OPENRIG_SHELL:-ohmyzsh}
+      - OPENRIG_SSH_SERVER=true
     ports:
       # Bound strictly to 127.0.0.1 (Host loopback only — invisible on public Wi-Fi / LAN)
+      - "127.0.0.1:2222:22"     # Local IDE Remote-SSH Bridge (Antigravity / VS Code / Cursor)
       - "127.0.0.1:3000:3000"   # React / Next / Flutter Web Server
       - "127.0.0.1:5173:5173"   # Vite / Vue.js
       - "127.0.0.1:8000:8000"   # Django / FastAPI / Python HTTP
