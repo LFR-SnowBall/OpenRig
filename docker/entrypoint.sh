@@ -94,9 +94,9 @@ sudo tee /usr/local/bin/rig-browser >/dev/null << 'EOF'
 #!/usr/bin/env bash
 echo ""
 echo "╔════════════════════════════════════════════════════════════════════════════╗"
-echo "║ 🌐 [OpenRig Browser Bridge] Autenticación requerida en tu navegador Host:  ║"
+echo "║ 🌐 [OpenRig Browser Bridge] Authentication required in your Host Browser:  ║"
 echo "╠════════════════════════════════════════════════════════════════════════════╣"
-echo "║ Haz Cmd+Click (Mac) o Ctrl+Click (Windows/Linux) en el siguiente enlace:   ║"
+echo "║ Cmd+Click (Mac) or Ctrl+Click (Windows/Linux) on the following URL:        ║"
 echo "╚════════════════════════════════════════════════════════════════════════════╝"
 echo "👉 $1"
 echo ""
@@ -110,24 +110,24 @@ set -e
 ACTION="${1:-help}"
 case "$ACTION" in
     pair)
-        echo "📱 Emparejando con celular Android por Wi-Fi Debugging..."
-        adb pair "${2:?Uso: rig-phone pair IP:PUERTO}"
+        echo "📱 Pairing with Android phone via Wireless Debugging..."
+        adb pair "${2:?Usage: rig-phone pair IP:PORT}"
         ;;
     connect)
-        echo "📱 Conectando con celular Android por Wi-Fi..."
-        adb connect "${2:?Uso: rig-phone connect IP:PUERTO}"
+        echo "📱 Connecting to Android phone over Wi-Fi..."
+        adb connect "${2:?Usage: rig-phone connect IP:PORT}"
         adb devices -l
         ;;
     usb-bridge)
-        echo "🔌 Conectando al servidor ADB USB del Host (host.docker.internal:5037)..."
+        echo "🔌 Connecting to Host USB ADB Server (host.docker.internal:5037)..."
         export ADB_SERVER_SOCKET=tcp:host.docker.internal:5037
         adb devices -l
         ;;
     *)
         echo "📱 OpenRig Mobile Helper (rig-phone):"
-        echo "  rig-phone pair <IP:PORT>     -> Empareja celular por Depuración Inalámbrica (Android 11+)"
-        echo "  rig-phone connect <IP:PORT>  -> Conecta celular por Wi-Fi para 'flutter run' / debug"
-        echo "  rig-phone usb-bridge         -> Usa el cable USB conectado a tu máquina Host"
+        echo "  rig-phone pair <IP:PORT>     -> Pair Android phone via Wireless Debugging (Android 11+)"
+        echo "  rig-phone connect <IP:PORT>  -> Connect Android phone over Wi-Fi for 'flutter run' / debug"
+        echo "  rig-phone usb-bridge         -> Bridge to a USB phone connected to your Host OS"
         ;;
 esac
 EOF
@@ -138,21 +138,21 @@ sudo tee /usr/local/bin/rig-sec >/dev/null << 'EOF'
 #!/usr/bin/env bash
 set -e
 TARGET="${1:-.}"
-echo "🛡️ [OpenRig Security Suite] Escaneando objetivo: $TARGET"
+echo "🛡️ [OpenRig Security Suite] Scanning target: $TARGET"
 echo "--------------------------------------------------------"
 if command -v gitleaks >/dev/null 2>&1; then
-    echo "🔍 [1/3] Gitleaks (Detección de secretos expuestos)..."
+    echo "🔍 [1/3] Gitleaks (Exposed secrets detection)..."
     gitleaks detect --source "$TARGET" --no-git || true
 fi
 if command -v trivy >/dev/null 2>&1; then
-    echo "🔍 [2/3] Trivy (Vulnerabilidades SCA/CVEs y misconfigs)..."
+    echo "🔍 [2/3] Trivy (SCA vulnerabilities / CVEs & IaC misconfigs)..."
     trivy fs --scanners vuln,misconfig "$TARGET" || true
 fi
 if command -v semgrep >/dev/null 2>&1; then
-    echo "🔍 [3/3] Semgrep (Análisis Estático SAST)..."
+    echo "🔍 [3/3] Semgrep (Static Application Security Testing - SAST)..."
     semgrep scan --config=auto "$TARGET" || true
 fi
-echo "✅ Escaneo de seguridad finalizado."
+echo "✅ Security audit completed."
 EOF
 sudo chmod +x /usr/local/bin/rig-sec
 
@@ -168,58 +168,58 @@ HIP_SCRIPT="/usr/libexec/openconnect/hipreport.sh"
 
 case "$ACTION" in
     gp|globalprotect)
-        PORTAL="${1:?Uso: rig vpn gp <portal.empresa.com>}"
+        PORTAL="${1:?Usage: rig vpn gp <portal.company.com>}"
         shift || true
-        echo "🛡️ [OpenRig VPN] Conectando a Palo Alto GlobalProtect ($PORTAL)..."
+        echo "🛡️ [OpenRig VPN] Connecting to Palo Alto GlobalProtect ($PORTAL)..."
         if [ -f "$HIP_SCRIPT" ]; then
             sudo openconnect --protocol=gp --csd-wrapper="$HIP_SCRIPT" --background "$PORTAL" "$@"
         else
             sudo openconnect --protocol=gp --background "$PORTAL" "$@"
         fi
-        echo "✅ Túnel GlobalProtect activo dentro de OpenRig (tu Host sigue libre)."
+        echo "✅ GlobalProtect tunnel active inside OpenRig (your Host OS network remains untouched)."
         ;;
     ovpn|openvpn)
-        OVPN_FILE="${1:?Uso: rig vpn ovpn <archivo.ovpn>}"
-        echo "🛡️ [OpenRig VPN] Conectando OpenVPN con $OVPN_FILE..."
+        OVPN_FILE="${1:?Usage: rig vpn ovpn <profile.ovpn>}"
+        echo "🛡️ [OpenRig VPN] Connecting OpenVPN with $OVPN_FILE..."
         sudo openvpn --config "$OVPN_FILE" --daemon
         sleep 2
         ip -brief addr show | grep -E "tun|tap" || true
         ;;
     wg|wireguard)
-        WG_CONF="${1:?Uso: rig vpn wg <archivo.conf>}"
-        echo "🛡️ [OpenRig VPN] Levantando túnel WireGuard ($WG_CONF)..."
+        WG_CONF="${1:?Usage: rig vpn wg <profile.conf>}"
+        echo "🛡️ [OpenRig VPN] Bringing up WireGuard tunnel ($WG_CONF)..."
         sudo wg-quick up "$WG_CONF"
         ;;
     anyconnect|cisco)
-        SERVER="${1:?Uso: rig vpn anyconnect <vpn.empresa.com>}"
+        SERVER="${1:?Usage: rig vpn anyconnect <vpn.company.com>}"
         shift || true
-        echo "🛡️ [OpenRig VPN] Conectando a Cisco AnyConnect ($SERVER)..."
+        echo "🛡️ [OpenRig VPN] Connecting to Cisco AnyConnect ($SERVER)..."
         sudo openconnect --protocol=anyconnect --background "$SERVER" "$@"
         ;;
     fortinet|forti)
-        SERVER="${1:?Uso: rig vpn fortinet <vpn.empresa.com:puerto>}"
+        SERVER="${1:?Usage: rig vpn fortinet <vpn.company.com:port>}"
         shift || true
-        echo "🛡️ [OpenRig VPN] Conectando a Fortinet SSL VPN ($SERVER)..."
+        echo "🛡️ [OpenRig VPN] Connecting to Fortinet SSL VPN ($SERVER)..."
         sudo openfortivpn "$SERVER" "$@" &
         ;;
     status)
-        echo "🔒 [OpenRig VPN Status] Interfaces de túnel activas dentro de OpenRig:"
-        ip -brief addr show | grep -E "tun|tap|wg|ppp" || echo "  (Ninguna VPN activa en este momento)"
+        echo "🔒 [OpenRig VPN Status] Active tunnel interfaces inside OpenRig:"
+        ip -brief addr show | grep -E "tun|tap|wg|ppp" || echo "  (No active VPN tunnels at the moment)"
         ;;
     down|stop)
-        echo "🛑 Cerrando túneles VPN dentro de OpenRig..."
+        echo "🛑 Closing VPN tunnels inside OpenRig..."
         sudo killall openconnect openvpn openfortivpn 2>/dev/null || true
-        echo "✅ VPN desconectada."
+        echo "✅ VPN disconnected."
         ;;
     *)
-        echo "🔒 OpenRig Multi-VPN Manager (Aislada del Host OS):"
-        echo "  rig vpn gp <portal.com>        -> Palo Alto GlobalProtect (con HIP Report emulation)"
-        echo "  rig vpn ovpn <archivo.ovpn>    -> OpenVPN (.ovpn en segundo plano)"
-        echo "  rig vpn wg <archivo.conf>      -> WireGuard (.conf)"
+        echo "🔒 OpenRig Multi-VPN Manager (Isolated from Host OS):"
+        echo "  rig vpn gp <portal.com>        -> Palo Alto GlobalProtect (with HIP Report emulation)"
+        echo "  rig vpn ovpn <profile.ovpn>    -> OpenVPN (.ovpn in background)"
+        echo "  rig vpn wg <profile.conf>      -> WireGuard (.conf)"
         echo "  rig vpn anyconnect <host>      -> Cisco AnyConnect"
         echo "  rig vpn fortinet <host:port>   -> Fortinet SSL VPN"
-        echo "  rig vpn status                 -> Muestra IPs e interfaces de VPN activas"
-        echo "  rig vpn down                   -> Desconecta cualquier VPN activa"
+        echo "  rig vpn status                 -> Show active VPN interfaces and IPs"
+        echo "  rig vpn down                   -> Disconnect all active VPNs"
         ;;
 esac
 EOF
@@ -238,9 +238,9 @@ shift || true
 
 case "$ACTION" in
     create|add)
-        NAME="${1:?Uso: rig profile create <alias> <git_name> <git_email> [aws_profile]}"
-        GIT_NAME="${2:?Falta git_name}"
-        GIT_EMAIL="${3:?Falta git_email}"
+        NAME="${1:?Usage: rig profile create <alias> <git_name> <git_email> [aws_profile]}"
+        GIT_NAME="${2:?Missing git_name}"
+        GIT_EMAIL="${3:?Missing git_email}"
         AWS_PROF="${4:-default}"
         PDIR="$PROFILES_DIR/$NAME"
         mkdir -p "$PDIR"
@@ -252,31 +252,31 @@ GIT_AUTHOR_EMAIL="$GIT_EMAIL"
 GIT_COMMITTER_EMAIL="$GIT_EMAIL"
 AWS_PROFILE="$AWS_PROF"
 EOP
-        echo "✅ Perfil de cliente '$NAME' ($GIT_NAME <$GIT_EMAIL> | AWS: $AWS_PROF) creado."
+        echo "✅ Client profile '$NAME' ($GIT_NAME <$GIT_EMAIL> | AWS: $AWS_PROF) created."
         ;;
     use|switch)
-        NAME="${1:?Uso: rig profile use <alias>}"
+        NAME="${1:?Usage: rig profile use <alias>}"
         PDIR="$PROFILES_DIR/$NAME"
         if [ ! -f "$PDIR/profile.env" ]; then
-            echo "❌ El perfil '$NAME' no existe. Créalo con: rig profile create $NAME \"Nombre\" \"email@dominio.com\""
+            echo "❌ Profile '$NAME' does not exist. Create it with: rig profile create $NAME \"Name\" \"email@domain.com\""
             exit 1
         fi
         source "$PDIR/profile.env"
         git config --global user.name "$GIT_AUTHOR_NAME"
         git config --global user.email "$GIT_AUTHOR_EMAIL"
         echo "$NAME" > "$ACTIVE_FILE"
-        echo "🎭 Perfil activo cambiado a: $NAME ($GIT_AUTHOR_NAME <$GIT_AUTHOR_EMAIL> | AWS_PROFILE=$AWS_PROFILE)"
+        echo "🎭 Active profile switched to: $NAME ($GIT_AUTHOR_NAME <$GIT_AUTHOR_EMAIL> | AWS_PROFILE=$AWS_PROFILE)"
         ;;
     current)
         if [ -f "$ACTIVE_FILE" ]; then
             CUR=$(cat "$ACTIVE_FILE")
-            echo "🎭 Perfil activo: $CUR ($(git config --global user.name) <$(git config --global user.email)>)"
+            echo "🎭 Active profile: $CUR ($(git config --global user.name) <$(git config --global user.email)>)"
         else
-            echo "🎭 Perfil activo: host-default ($(git config --global user.name 2>/dev/null || echo 'sin configurar') <$(git config --global user.email 2>/dev/null || echo '')>)"
+            echo "🎭 Active profile: host-default ($(git config --global user.name 2>/dev/null || echo 'unconfigured') <$(git config --global user.email 2>/dev/null || echo '')>)"
         fi
         ;;
     list|ls)
-        echo "🎭 Perfiles de Cliente / Identidad en OpenRig:"
+        echo "🎭 Client / Identity Profiles in OpenRig:"
         CUR=$(cat "$ACTIVE_FILE" 2>/dev/null || echo "")
         for p in "$PROFILES_DIR"/*/profile.env; do
             [ -f "$p" ] || continue
@@ -287,8 +287,8 @@ EOP
         done
         ;;
     *)
-        echo "Uso de Perfiles por Cliente (rig profile):"
-        echo "  rig profile create <alias> \"<Nombre>\" \"<Email>\" [aws_profile]"
+        echo "Multi-Client Profile Manager (rig profile):"
+        echo "  rig profile create <alias> \"<Name>\" \"<Email>\" [aws_profile]"
         echo "  rig profile use <alias>"
         echo "  rig profile list"
         echo "  rig profile current"
@@ -302,8 +302,8 @@ sudo tee /usr/local/bin/rig-share >/dev/null << 'EOF'
 #!/usr/bin/env bash
 set -e
 PORT="${1:-8000}"
-echo "🌐 [OpenRig Share] Creando túnel HTTPS público temporal hacia http://localhost:${PORT}..."
-echo "   (Presiona Ctrl+C para cerrar el túnel cuando termines la demo)"
+echo "🌐 [OpenRig Share] Creating temporary public HTTPS tunnel to http://localhost:${PORT}..."
+echo "   (Press Ctrl+C to close the tunnel when your demo is finished)"
 cloudflared tunnel --url "http://localhost:${PORT}"
 EOF
 sudo chmod +x /usr/local/bin/rig-share
@@ -319,10 +319,10 @@ if [ "$EXPECTED_HW" != "ANY" ] && [ "$EXPECTED_HW" != "GUEST_EPHEMERAL" ]; then
     if [ "${OPENRIG_HW_ID:-}" != "$EXPECTED_HW" ]; then
         echo ""
         echo "╔════════════════════════════════════════════════════════════════════════════╗"
-        echo "║ 🚨 ALERTA DE SEGURIDAD [OpenRig Zero-Trust Hardware Lock]                  ║"
+        echo "║ 🚨 SECURITY ALERT [OpenRig Zero-Trust Hardware Lock]                       ║"
         echo "╠════════════════════════════════════════════════════════════════════════════╣"
-        echo "║ Esta llave SSH está casada exclusivamente con el equipo: '$DEV_NAME'       ║"
-        echo "║ El Hardware UUID de tu computadora actual NO coincide. Acceso bloqueado.   ║"
+        echo "║ This SSH key is exclusively bound to hardware device: '$DEV_NAME'          ║"
+        echo "║ Your current machine's Hardware UUID DOES NOT MATCH. Access denied.        ║"
         echo "╚════════════════════════════════════════════════════════════════════════════╝"
         echo ""
         exit 1
@@ -332,14 +332,14 @@ fi
 # 2. If Ephemeral Guest Keychain Login, burn the temporary key immediately upon entry
 if [ "$EXPECTED_HW" = "GUEST_EPHEMERAL" ]; then
     sudo sed -i '/GUEST_EPHEMERAL/d' /etc/openrig/authorized_keys 2>/dev/null || true
-    echo "🔑 [OpenRig Guest Keychain] Pase efímero validado y destruido (no quedará rastro al salir)."
+    echo "🔑 [OpenRig Guest Keychain] Ephemeral pass verified and destroyed (zero trace left on exit)."
 fi
 
 # 3. Execute explicit command if non-interactive, otherwise do Session Takeover via tmux
 if [ -n "${SSH_ORIGINAL_COMMAND:-}" ]; then
     exec zsh -ic "$SSH_ORIGINAL_COMMAND"
 else
-    echo "⚡ [OpenRig Session Takeover] Conectando a tu sesión viva en /workspace (desconectando pantallas previas)..."
+    echo "⚡ [OpenRig Session Takeover] Attaching to your live session in /workspace (detaching previous screens)..."
     exec tmux new-session -A -D -s openrig -c /workspace "zsh -l"
 fi
 EOF
@@ -350,10 +350,10 @@ sudo tee /usr/local/bin/rig-request >/dev/null << 'EOF'
 #!/usr/bin/env bash
 set -e
 REQ_FILE="/workspace/.openrig-hardware-request.json"
-RAM="${1:?Uso: rig-request <nueva-ram-ej-8g> <nuevos-cpus-ej-4> [motivo]}"
-CPUS="${2:?Uso: rig-request <nueva-ram-ej-8g> <nuevos-cpus-ej-4> [motivo]}"
+RAM="${1:?Usage: rig-request <new-ram-e.g.-8g> <new-cpus-e.g.-4> [reason]}"
+CPUS="${2:?Usage: rig-request <new-ram-e.g.-8g> <new-cpus-e.g.-4> [reason]}"
 shift 2 || true
-REASON="${*:-Proyecto requiere mayor capacidad de compilacion}"
+REASON="${*:-Project requires higher compilation resources}"
 
 cat << EOR > "$REQ_FILE"
 {
@@ -364,11 +364,11 @@ cat << EOR > "$REQ_FILE"
   "timestamp": "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 }
 EOR
-echo "📨 Solicitud de ampliación de hardware virtual enviada al Administrador del Servidor:"
-echo "   • RAM solicitada:  $RAM"
-echo "   • CPUs solicitados: $CPUS"
-echo "   • Motivo:          $REASON"
-echo "   (El Administrador puede aplicarla en caliente sin reiniciar tu sesión con: rig-server scale <usuario> --ram $RAM --cpus $CPUS)"
+echo "📨 Virtual hardware upgrade request sent to the Server Administrator:"
+echo "   • Requested RAM:  $RAM"
+echo "   • Requested CPUs: $CPUS"
+echo "   • Reason:         $REASON"
+echo "   (The Administrator can hot-scale your session without restart via: rig-server scale <user> --ram $RAM --cpus $CPUS)"
 EOF
 sudo chmod +x /usr/local/bin/rig-request
 
@@ -385,22 +385,22 @@ shift || true
 
 case "$ACTION" in
     list|ls)
-        echo "💻 Equipos casados por Hardware UUID a esta estación OpenRig:"
+        echo "💻 Devices bound by Hardware UUID to this OpenRig workstation:"
         echo "----------------------------------------------------------------------------"
         if [ ! -s "$AUTH_KEYS" ]; then
-            echo "  (Ningún equipo vinculado todavía)"
+            echo "  (No devices bound yet)"
         else
             grep -E "rig-session-guard" "$AUTH_KEYS" | while read -r line; do
                 HW=$(echo "$line" | sed -n 's/.*rig-session-guard \([^ ]*\) \([^"]*\).*/\1/p')
                 DEV=$(echo "$line" | sed -n 's/.*rig-session-guard \([^ ]*\) \([^"]*\).*/\2/p')
-                echo "  🔒 Equipo: $DEV   | Hardware ID: ${HW:0:16}..."
+                echo "  🔒 Device: $DEV   | Hardware ID: ${HW:0:16}..."
             done
         fi
         ;;
     revoke|remove)
-        TARGET_DEV="${1:?Uso: rig device revoke <nombre-equipo>}"
+        TARGET_DEV="${1:?Usage: rig device revoke <device-name>}"
         sudo sed -i "/rig-session-guard [^ ]* ${TARGET_DEV}\"/d" "$AUTH_KEYS"
-        echo "🗑️  Equipo '$TARGET_DEV' desvinculado y revocado inmediatamente."
+        echo "🗑️  Device '$TARGET_DEV' unlinked and revoked immediately."
         ;;
     keychain)
         if [ ! -f "$KEYCHAIN_FILE" ]; then
@@ -409,18 +409,18 @@ case "$ACTION" in
         fi
         SECRET=$(cat "$KEYCHAIN_FILE")
         URI="otpauth://totp/OpenRig:$(hostname)?secret=${SECRET}&issuer=OpenRig"
-        echo "🔐 [OpenRig Guest Keychain] Agrega este Llavero a tu 1Password / Authenticator:"
-        echo "   Secreto Base32 (TOTP): $SECRET"
-        echo "   URI OTPAuth:           $URI"
+        echo "🔐 [OpenRig Guest Keychain] Add this Keychain to your 1Password / Authenticator:"
+        echo "   Base32 Secret (TOTP): $SECRET"
+        echo "   OTPAuth URI:          $URI"
         if command -v oathtool >/dev/null 2>&1; then
-            echo "   Código actual (6 dígitos): $(oathtool --totp -b "$SECRET")"
+            echo "   Current 6-digit code: $(oathtool --totp -b "$SECRET")"
         fi
         if command -v qrencode >/dev/null 2>&1; then
             qrencode -t ANSIUTF8 "$URI" || true
         fi
         ;;
     *)
-        echo "Uso: rig device [list | revoke <equipo> | keychain]"
+        echo "Usage: rig device [list | revoke <device> | keychain]"
         ;;
 esac
 EOF

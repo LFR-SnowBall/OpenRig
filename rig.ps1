@@ -1,6 +1,6 @@
 <#
 .SYNOPSIS
-OpenRig CLI for Windows PowerShell (GLADOS Gaming Rig & Windows Workstations)
+OpenRig CLI for Windows PowerShell (Gaming Rigs & Windows Workstations)
 Zero-host-pollution modular developer, security & AI workstation.
 #>
 
@@ -24,15 +24,15 @@ function Show-Banner {
 
 function Invoke-Setup {
     Show-Banner
-    Write-Host "Selecciona el Rol para configurar tu máquina OpenRig:`n" -ForegroundColor White
-    Write-Host "  1) 🐍 Backend Python     (pyenv + uv, Python multi-versión, Django, Flask, FastAPI)"
+    Write-Host "Select the Role Profile for your OpenRig Workstation:`n" -ForegroundColor White
+    Write-Host "  1) 🐍 Backend Python     (pyenv + uv, multi-version Python, Django, Flask, FastAPI)"
     Write-Host "  2) ☕ Backend JVM        (SDKMAN!, Java 21/17, Kotlin, Spring Boot, Maven, Gradle)"
     Write-Host "  3) 🎨 Frontend & Web     (nvm, Node LTS, Vue.js, React, Vite, pnpm, Yarn, Bun)"
     Write-Host "  4) 📱 Mobile & Flutter   (Flutter, FVM, Dart, Android SDK CLI, ADB Wi-Fi/USB)"
     Write-Host "  5) 🛡️  DevSecOps & Pentest(nmap, nuclei, trivy, semgrep, gitleaks, sqlmap, AWS CLI)"
     Write-Host "  6) 🦾 Full-Stack Core    (Python + JVM + Node + Cloud + Security + AI CLIs)"
     Write-Host ""
-    $choice = Read-Host "👉 Elige una opción [1-6] (default: 6)"
+    $choice = Read-Host "👉 Choose an option [1-6] (default: 6)"
     if ([string]::IsNullOrWhiteSpace($choice)) { $choice = "6" }
 
     $py = "false"; $jvm = "false"; $node = "false"; $mob = "false"; $sec = "false"; $role = "fullstack"
@@ -63,19 +63,19 @@ CONTAINER_NAME=openrig
 HOST_WORKSPACE_PATH=$wsPath
 "@
     Set-Content -Path $EnvFile -Value $content -Encoding UTF8
-    Write-Host "✅ Configuración guardada en .env (Perfil: $role). Ejecuta: .\rig.ps1 up" -ForegroundColor Green
+    Write-Host "✅ Configuration saved to .env (Profile: $role). Run: .\rig.ps1 up" -ForegroundColor Green
 }
 
 switch ($Command) {
     { $_ -in "setup", "init" } { Invoke-Setup }
     { $_ -in "up", "start" } {
         if (-not (Test-Path $EnvFile)) { Invoke-Setup }
-        Write-Progress -Activity "OpenRig Workstation" -Status "15% - Verificando motor Docker..." -PercentComplete 15
-        Write-Host "🚀 [15%] Verificando imagen y módulos de OpenRig..." -ForegroundColor Cyan
-        Write-Progress -Activity "OpenRig Workstation" -Status "55% - Construyendo / Verificando capas de imagen..." -PercentComplete 55
+        Write-Progress -Activity "OpenRig Workstation" -Status "15% - Checking Docker engine..." -PercentComplete 15
+        Write-Host "🚀 [15%] Checking OpenRig image and modules..." -ForegroundColor Cyan
+        Write-Progress -Activity "OpenRig Workstation" -Status "55% - Building / Verifying image layers..." -PercentComplete 55
         docker compose -f "$RigDir\docker-compose.yml" --env-file "$EnvFile" up -d --build @ArgsRest
-        Write-Progress -Activity "OpenRig Workstation" -Status "100% - ¡OpenRig Activo!" -PercentComplete 100 -Completed
-        Write-Host "✅ [100%] OpenRig activo. Entra con: .\rig.ps1 shell" -ForegroundColor Green
+        Write-Progress -Activity "OpenRig Workstation" -Status "100% - OpenRig Ready!" -PercentComplete 100 -Completed
+        Write-Host "✅ [100%] OpenRig is running. Enter with: .\rig.ps1 shell" -ForegroundColor Green
     }
     { $_ -in "shell", "enter" } {
         docker exec -it openrig zsh -l
@@ -93,7 +93,7 @@ switch ($Command) {
         $sub = if ($ArgsRest.Count -gt 0) { $ArgsRest[0] } else { "list" }
         $tag = if ($ArgsRest.Count -gt 1) { $ArgsRest[1] } else { "latest" }
         switch ($sub) {
-            "save"    { docker commit openrig "openrig-snapshot:$tag" | Out-Null; Write-Host "✅ Snapshot openrig-snapshot:$tag guardado." -ForegroundColor Green }
+            "save"    { docker commit openrig "openrig-snapshot:$tag" | Out-Null; Write-Host "✅ Snapshot openrig-snapshot:$tag saved." -ForegroundColor Green }
             "restore" { docker tag "openrig-snapshot:$tag" "openrig:fullstack"; docker compose -f "$RigDir\docker-compose.yml" --env-file "$EnvFile" up -d --force-recreate }
             default   { docker images "openrig-snapshot" }
         }
@@ -106,7 +106,7 @@ switch ($Command) {
         ssh -A -p $port -L 3000:127.0.0.1:3000 -L 5173:127.0.0.1:5173 -L 8000:127.0.0.1:8000 -L 8080:127.0.0.1:8080 "rig@$hostIp"
     }
     { $_ -in "down", "stop" } {
-        Write-Host "🛑 Apagando OpenRig y liberando recursos para Gaming/Host..." -ForegroundColor Yellow
+        Write-Host "🛑 Stopping OpenRig and freeing resources for Gaming/Host..." -ForegroundColor Yellow
         docker compose -f "$RigDir\docker-compose.yml" --profile services down
     }
     "status" {
@@ -115,10 +115,10 @@ switch ($Command) {
     }
     default {
         Show-Banner
-        Write-Host "Comandos:"
-        Write-Host "  .\rig.ps1 setup   -> Configura el rol de tu estación"
-        Write-Host "  .\rig.ps1 up      -> Construye y levanta OpenRig"
-        Write-Host "  .\rig.ps1 shell   -> Abre terminal Zsh dentro de OpenRig"
-        Write-Host "  .\rig.ps1 down    -> Apaga contenedores y libera 100% RAM/CPU"
+        Write-Host "Commands:"
+        Write-Host "  .\rig.ps1 setup   -> Configure your workstation role"
+        Write-Host "  .\rig.ps1 up      -> Build and start OpenRig"
+        Write-Host "  .\rig.ps1 shell   -> Open Zsh terminal inside OpenRig"
+        Write-Host "  .\rig.ps1 down    -> Stop containers and free 100% RAM/CPU"
     }
 }
