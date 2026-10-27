@@ -319,8 +319,10 @@ PY
 
 start_ide_bridge_watcher() {
     local trigger_file="${RIG_DIR}/workspace/.openrig-ide-trigger"
+    local cmd_file="${RIG_DIR}/workspace/.openrig-host-cmd"
+    local out_file="${RIG_DIR}/workspace/.openrig-host-cmd.out"
     local pid_file="$HOME/.openrig/ide-watcher.pid"
-    rm -f "$trigger_file"
+    rm -f "$trigger_file" "$cmd_file" "$out_file"
     if [ -f "$pid_file" ] && kill -0 "$(cat "$pid_file" 2>/dev/null)" 2>/dev/null; then
         return 0
     fi
@@ -337,6 +339,34 @@ start_ide_bridge_watcher() {
                 elif command -v code >/dev/null 2>&1; then
                     code --new-window --folder-uri "vscode-remote://ssh-remote+openrig${target_path}" >/dev/null 2>&1 &
                 fi
+            fi
+            if [ -f "$cmd_file" ]; then
+                raw_cmd=$(cat "$cmd_file" 2>/dev/null || true)
+                rm -f "$cmd_file"
+                case "$raw_cmd" in
+                    service\ up\ *)
+                        svcs="${raw_cmd#service up }"
+                        docker compose -f "${RIG_DIR}/docker-compose.yml" --env-file "$ENV_FILE" up -d $svcs > "${out_file}.tmp" 2>&1 || true
+                        mv "${out_file}.tmp" "$out_file"
+                        ;;
+                    service\ down\ *)
+                        svcs="${raw_cmd#service down }"
+                        docker compose -f "${RIG_DIR}/docker-compose.yml" --env-file "$ENV_FILE" stop $svcs > "${out_file}.tmp" 2>&1 || true
+                        mv "${out_file}.tmp" "$out_file"
+                        ;;
+                    snapshot\ restore\ *)
+                        snap_tag="${raw_cmd#snapshot restore }"
+                        role=$(grep -E '^OPENRIG_ROLE=' "$ENV_FILE" | cut -d= -f2 || echo "fullstack")
+                        (
+                            docker tag "openrig-snapshot:${snap_tag}" "openrig:${role}" && \
+                            docker compose -f "${RIG_DIR}/docker-compose.yml" --env-file "$ENV_FILE" up -d --force-recreate
+                        ) > "${out_file}.tmp" 2>&1 || true
+                        mv "${out_file}.tmp" "$out_file"
+                        ;;
+                    *)
+                        echo "❌ Action not permitted over Host bridge." > "$out_file"
+                        ;;
+                esac
             fi
             sleep 0.5
         done
@@ -767,29 +797,34 @@ case "$ACTION" in
     status|ps)       cmd_status ;;
     down|stop)       cmd_down ;;
     uninstall|nuke)  cmd_uninstall ;;
-    *)
+    help|-h|--help|*)
         banner
-        echo -e "${BOLD}Core Commands:${RESET}"
-        echo "  ./rig setup                       -> Configure Role Profile, modules, and preferred shell"
-        echo "  ./rig up                          -> Build and start your OpenRig workstation (with % progress)"
-        echo "  ./rig shell                       -> Enter your terminal inside OpenRig"
-        echo "  ./rig ide                         -> Open Antigravity IDE / VS Code directly inside OpenRig"
-        echo "  ./rig down                        -> Stop all containers and free 100% of Host RAM"
-        echo "  ./rig uninstall                   -> Uninstall container & image (preserves ./workspace)"
+        echo -e "${GREEN}${BOLD}📍 Context: HOST OS CLI (External Controller -> Controlling OpenRig Container)${RESET}\n"
+        echo -e "${BOLD}Core Lifecycle & IDE Commands (Host Only):${RESET}"
+        echo "  rig setup                         -> Configure Role Profile, modules, and preferred shell"
+        echo "  rig up                            -> Build and start your OpenRig workstation (with % progress)"
+        echo "  rig shell                         -> Enter your interactive terminal inside OpenRig"
+        echo "  rig ide [path]                    -> Open Antigravity IDE / VS Code attached to OpenRig"
+        echo "  rig down                          -> Stop all containers and free 100% of Host RAM"
+        echo "  rig uninstall                     -> Uninstall container & image (preserves ./workspace)"
+        echo "  rig lock / rig unlock             -> Toggle Anti-Malware Sandbox Mode (unlock is Host-only)"
         echo ""
-        echo -e "${BOLD}Differentiators & Advanced Tools:${RESET}"
-        echo "  ./rig profile [create|use|list]   -> Isolate Git author & AWS credentials per client/company"
-        echo "  ./rig vpn [gp|ovpn|wg|status|down]-> Isolated container VPN (GlobalProtect, OpenVPN, WireGuard)"
-        echo "  ./rig snapshot [save|restore|list]-> Time Machine: freeze or restore workstation state"
-        echo "  ./rig share <port>                -> Expose a local port via public HTTPS for demos/webhooks"
-        echo "  ./rig service up <name>           -> Start sibling containers (postgres, redis, localstack)"
-        echo "  ./rig phone connect <IP:PORT>     -> Connect physical Android phone over Wi-Fi to OpenRig"
-        echo "  ./rig sec [path]                  -> Run Security Audit (Gitleaks + Trivy + Semgrep)"
-        echo "  ./rig lock / ./rig unlock         -> Anti-Malware Sandbox Mode (locks Docker socket & sudo)"
-        echo "  ./rig join <srv:7070> --token <t> -> Bind your machine by Hardware UUID to an OpenRig-Server"
-        echo "  ./rig connect <openrig-user>      -> Connect to remote workstation (with Session Takeover)"
-        echo "  ./rig guest <srv:7070> --user <u> -> Zero-trace Guest Mode using your TOTP Keychain"
-        echo "  ./rig request <ram> <cpus> [note] -> Request more virtual RAM or vCPUs from Server Manager"
-        echo "  ./rig device [list|revoke|keychain]-> Manage bound devices and your TOTP Keychain"
+        echo -e "${BOLD}Workstation Tools (Available both on Host & Inside Container):${RESET}"
+        echo "  rig profile [create|use|list]     -> Isolate Git author & AWS credentials per client/company"
+        echo "  rig vpn [gp|ovpn|wg|status|down]  -> Isolated container VPN (GlobalProtect, OpenVPN, WireGuard)"
+        echo "  rig snapshot [save|restore|list]  -> Time Machine: freeze or restore workstation state"
+        echo "  rig service [up|down] <name>      -> Manage sibling containers (postgres, redis, localstack)"
+        echo "  rig sec [path]                    -> Run Security Audit (Gitleaks + Trivy + Semgrep)"
+        echo "  rig share [port]                  -> Expose a local port via public HTTPS for demos/webhooks"
+        echo "  rig phone [pair|connect|usb-bridge]-> Connect physical Android phone over Wi-Fi/USB to OpenRig"
+        echo "  rig status                        -> Show active OpenRig & sibling containers"
+        echo ""
+        echo -e "${BOLD}Remote OpenRig-Server & Zero-Trust Fleet Commands:${RESET}"
+        echo "  rig join <srv:7070> --token <t>   -> Bind your machine by Hardware UUID to an OpenRig-Server"
+        echo "  rig connect <openrig-user>        -> Connect to remote workstation (with Session Takeover)"
+        echo "  rig guest <srv:7070> --user <u>   -> Zero-trace Guest Mode using your TOTP Keychain"
+        echo "  rig request <ram> <cpus> [note]   -> Request live RAM or vCPU hot-scaling from Server Manager"
+        echo "  rig device [list|revoke|keychain] -> Manage bound devices and your TOTP Keychain"
+        echo "  rig -h | rig --help               -> Show this Host CLI command reference"
         ;;
 esac

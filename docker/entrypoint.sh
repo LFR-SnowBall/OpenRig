@@ -375,12 +375,63 @@ sudo tee /usr/local/bin/rig-request >/dev/null << 'EOF'
 #!/usr/bin/env bash
 set -e
 REQ_FILE="/workspace/.openrig-hardware-request.json"
-RAM="${1:?Usage: rig-request <new-ram-e.g.-8g> <new-cpus-e.g.-4> [reason]}"
-CPUS="${2:?Usage: rig-request <new-ram-e.g.-8g> <new-cpus-e.g.-4> [reason]}"
-shift 2 || true
-REASON="${*:-Project requires higher compilation resources}"
 
-cat << EOR > "$REQ_FILE"
+get_live_hw() {
+    python3 - << 'PY'
+import os, subprocess
+mem_max = "Dynamic (Host Shared)"
+try:
+    m = open("/sys/fs/cgroup/memory.max").read().strip()
+    if m != "max":
+        mem_max = f"{int(m)/(1024**3):.1f} GB"
+except Exception:
+    pass
+cpu_max = "Dynamic (Host Shared)"
+try:
+    c = open("/sys/fs/cgroup/cpu.max").read().strip().split()
+    if c[0] != "max":
+        cpu_max = f"{int(c[0])/int(c[1]):.1f} vCPUs"
+    else:
+        nproc = subprocess.check_output(["nproc"]).decode().strip()
+        cpu_max = f"{nproc} vCPUs (Unthrottled)"
+except Exception:
+    pass
+print(f"{mem_max} RAM | {cpu_max}")
+PY
+}
+
+SUB="${1:-status}"
+case "$SUB" in
+    status|list)
+        echo "🧠 Live Workstation Virtual Hardware ($(hostname)): $(get_live_hw)"
+        if [ -f "$REQ_FILE" ]; then
+            python3 - "$REQ_FILE" << 'PY'
+import json, sys
+d = json.loads(open(sys.argv[1]).read())
+print(f"⏳ Pending Upgrade Request: {d.get('requested_ram')} RAM | {d.get('requested_cpus')} vCPUs")
+print(f"   • Reason:    {d.get('reason')}")
+print(f"   • Submitted: {d.get('timestamp')}")
+PY
+        else
+            echo "✅ Pending Upgrade Requests: None (current hardware quota is active)."
+        fi
+        ;;
+    cancel|clear)
+        rm -f "$REQ_FILE"
+        echo "🗑️  Pending hardware upgrade request cancelled."
+        ;;
+    help|-h|--help)
+        echo "Usage (Inside Connected Container):"
+        echo "  rig request <ram> <cpus> [reason] -> Request live RAM/vCPU upgrade from Server Manager (e.g. rig request 8g 4 \"Android build\")"
+        echo "  rig request status                -> Check live allocated RAM/vCPUs and pending request status"
+        echo "  rig request cancel                -> Cancel a pending upgrade request"
+        ;;
+    *)
+        RAM="${1:?Usage: rig request <new-ram-e.g.-8g> <new-cpus-e.g.-4> [reason]}"
+        CPUS="${2:?Usage: rig request <new-ram-e.g.-8g> <new-cpus-e.g.-4> [reason]}"
+        shift 2 || true
+        REASON="${*:-Project requires higher compilation resources}"
+        cat << EOR > "$REQ_FILE"
 {
   "hostname": "$(hostname)",
   "requested_ram": "$RAM",
@@ -389,11 +440,13 @@ cat << EOR > "$REQ_FILE"
   "timestamp": "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 }
 EOR
-echo "📨 Virtual hardware upgrade request sent to the Server Administrator:"
-echo "   • Requested RAM:  $RAM"
-echo "   • Requested CPUs: $CPUS"
-echo "   • Reason:         $REASON"
-echo "   (The Administrator can hot-scale your session without restart via: rig-server scale <user> --ram $RAM --cpus $CPUS)"
+        echo "📨 Virtual hardware upgrade request sent to the OpenRig-Server Administrator:"
+        echo "   • Current Live Hardware: $(get_live_hw)"
+        echo "   • Requested Upgrade:     $RAM RAM | $CPUS vCPUs"
+        echo "   • Reason:                $REASON"
+        echo "   💡 Once approved by the Administrator ('rig-server scale'), your container scales LIVE with zero restart."
+        ;;
+esac
 EOF
 sudo chmod +x /usr/local/bin/rig-request
 
@@ -450,6 +503,204 @@ case "$ACTION" in
 esac
 EOF
 sudo chmod +x /usr/local/bin/rig-device
+
+# 6g. Install Unified In-Container 'rig' CLI (/usr/local/bin/rig)
+sudo tee /usr/local/bin/rig >/dev/null << 'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+
+CYAN="\033[96m"
+GREEN="\033[92m"
+YELLOW="\033[93m"
+RED="\033[91m"
+BOLD="\033[1m"
+RESET="\033[0m"
+
+banner() {
+    echo -e "${CYAN}${BOLD}"
+    echo "╔══════════════════════════════════════════════════════════════════════════╗"
+    echo "║   ⚡ OPENRIG — PORTABLE MODULAR DEV, SEC & AI WORKSTATION                ║"
+    echo "║   By Linux Open Source S.A. de C.V.                                      ║"
+    echo "╚══════════════════════════════════════════════════════════════════════════╝"
+    echo -e "${RESET}"
+}
+
+run_host_bridge() {
+    local cmd_str="$1"
+    local cmd_file="/workspace/.openrig-host-cmd"
+    local out_file="/workspace/.openrig-host-cmd.out"
+    rm -f "$out_file"
+    echo "$cmd_str" > "$cmd_file"
+    for _ in {1..20}; do
+        if [ -f "$out_file" ]; then
+            cat "$out_file"
+            rm -f "$out_file"
+            return 0
+        fi
+        sleep 0.4
+    done
+    echo -e "${YELLOW}ℹ️ Command dispatched to Host daemon (${cmd_str}).${RESET}"
+}
+
+ACTION="${1:-help}"
+shift || true
+
+case "$ACTION" in
+    ide|code|agy)
+        rig-open-ide "${1:-.}"
+        ;;
+    profile|prof)
+        rig-profile "$@"
+        ;;
+    vpn)
+        rig-vpn "$@"
+        ;;
+    sec|audit)
+        rig-sec "${1:-.}"
+        ;;
+    share|tunnel)
+        rig-share "${1:-8000}"
+        ;;
+    phone|adb)
+        rig-phone "$@"
+        ;;
+    device|dev)
+        rig-device "$@"
+        ;;
+    request|req)
+        rig-request "$@"
+        ;;
+    snapshot|snap)
+        SUB="${1:-list}"
+        shift || true
+        case "$SUB" in
+            save|create)
+                TAG="${1:?Usage: rig snapshot save <snapshot-name>}"
+                echo -e "${CYAN}📸 Saving workstation snapshot as 'openrig-snapshot:${TAG}'...${RESET}"
+                docker commit "$(hostname)" "openrig-snapshot:${TAG}" >/dev/null
+                echo -e "${GREEN}✅ Snapshot 'openrig-snapshot:${TAG}' saved successfully.${RESET}"
+                ;;
+            list|ls)
+                echo -e "${CYAN}📸 Available Snapshots (Time Machine):${RESET}"
+                docker images "openrig-snapshot" --format "table {{.Repository}}:{{.Tag}}\t{{.CreatedSince}}\t{{.Size}}"
+                ;;
+            export)
+                TAG="${1:?Usage: rig snapshot export <snapshot-name> [output.tar.gz]}"
+                OUT="${2:-openrig-${TAG}.tar.gz}"
+                echo -e "${CYAN}📦 Exporting snapshot '${TAG}' to ${OUT}...${RESET}"
+                docker save "openrig-snapshot:${TAG}" | gzip > "$OUT"
+                echo -e "${GREEN}✅ Exported to: ${OUT}${RESET}"
+                ;;
+            import)
+                FILE="${1:?Usage: rig snapshot import <file.tar.gz>}"
+                echo -e "${CYAN}📥 Importing snapshot from ${FILE}...${RESET}"
+                gunzip -c "$FILE" | docker load
+                echo -e "${GREEN}✅ Snapshot imported.${RESET}"
+                ;;
+            restore)
+                TAG="${1:?Usage: rig snapshot restore <snapshot-name>}"
+                echo -e "${YELLOW}⏪ Requesting Host daemon to restore workstation to 'openrig-snapshot:${TAG}'...${RESET}"
+                run_host_bridge "snapshot restore ${TAG}"
+                ;;
+            *)
+                echo "📸 OpenRig Time Machine (Inside Container):"
+                echo "  rig snapshot save <tag>              -> Freeze current workstation state"
+                echo "  rig snapshot list                    -> List saved snapshots"
+                echo "  rig snapshot restore <tag>           -> Roll back workstation to a snapshot"
+                echo "  rig snapshot export <tag> [file.tgz] -> Export snapshot to portable .tar.gz"
+                echo "  rig snapshot import <file.tgz>       -> Import a portable snapshot"
+                ;;
+        esac
+        ;;
+    service|svc)
+        SUB="${1:-help}"
+        shift || true
+        case "$SUB" in
+            up)
+                SVCS="${*:?Usage: rig service up [postgres|redis|localstack]}"
+                echo -e "${CYAN}🐳 Starting sibling containers on 'openrig-net': ${SVCS}${RESET}"
+                run_host_bridge "service up ${SVCS}"
+                docker ps --filter "network=openrig-net" --format "table {{.Names}}\t{{.Image}}\t{{.Status}}\t{{.Ports}}"
+                ;;
+            down|stop)
+                SVCS="${*:?Usage: rig service down [postgres|redis|localstack]}"
+                echo -e "${YELLOW}🛑 Stopping sibling containers: ${SVCS}${RESET}"
+                run_host_bridge "service down ${SVCS}"
+                ;;
+            *)
+                echo "Usage: rig service up [postgres|redis|localstack]"
+                echo "       rig service down [postgres|redis|localstack]"
+                ;;
+        esac
+        ;;
+    status|ps)
+        banner
+        echo -e "${CYAN}${BOLD}📍 Workstation Status (Inside Container '$(hostname)'):${RESET}"
+        rig-request status || true
+        rig-profile current || true
+        rig-vpn status || true
+        echo ""
+        if [ -S /var/run/docker.sock ] && docker ps >/dev/null 2>&1; then
+            echo -e "${CYAN}🐳 Active Containers on 'openrig-net':${RESET}"
+            docker ps --filter "network=openrig-net" --format "table {{.Names}}\t{{.Image}}\t{{.Status}}\t{{.Ports}}"
+        elif [ "${OPENRIG_SERVER_TENANT:-false}" = "true" ] || [[ "$(hostname)" == rig-* ]]; then
+            echo -e "${GREEN}🏢 Mode: OpenRig-Server Isolated Tenant Workstation (Multi-Tenant Zero-Trust)${RESET}"
+        else
+            echo -e "${YELLOW}🔒 Docker Socket is currently LOCKED (Anti-Malware Sandbox Mode active).${RESET}"
+        fi
+        ;;
+    lock|sandbox)
+        echo -e "${YELLOW}🔒 Activating Anti-Malware Sandbox Mode from inside OpenRig...${RESET}"
+        sudo bash -c '
+            if [ -S /var/run/docker.sock ]; then
+                chown root:root /var/run/docker.sock
+                chmod 600 /var/run/docker.sock
+            fi
+            gpasswd -d rig docker >/dev/null 2>&1 || true
+            gpasswd -d rig sudo >/dev/null 2>&1 || true
+            rm -f /etc/sudoers.d/rig*
+            sed -i "/^rig ALL=/d" /etc/sudoers 2>/dev/null || true
+        '
+        echo -e "${GREEN}✅ Workstation JAILED (Sandbox Mode active):${RESET}"
+        echo -e "   • Docker Socket locked (0600 root:root) and sudo privileges revoked."
+        echo -e "   • To restore privileges, run ${BOLD}rig unlock${RESET} from your Host OS terminal."
+        ;;
+    unlock)
+        echo -e "${RED}🔒 Security Boundary: 'rig unlock' CANNOT be executed from inside the container.${RESET}"
+        echo -e "👉 Run ${BOLD}rig unlock${RESET} from your Host OS terminal (macOS/Windows/Linux) to restore privileges."
+        exit 1
+        ;;
+    up|down|setup|uninstall|shell|join|connect|guest)
+        echo -e "${YELLOW}ℹ️ You are already inside the OpenRig container ($(hostname):/workspace)!${RESET}"
+        echo -e "   Host/Client command (${BOLD}rig ${ACTION}${RESET}) is executed from your external Host OS terminal."
+        echo -e "   Run ${BOLD}rig -h${RESET} to see all commands available inside this container."
+        ;;
+    help|-h|--help|*)
+        banner
+        echo -e "${GREEN}${BOLD}📍 Context: INSIDE CONTAINER ($(hostname):$(pwd))${RESET}"
+        rig-request status 2>/dev/null | head -n 1 || true
+        echo ""
+        echo -e "${BOLD}In-Container Workstation Commands:${RESET}"
+        echo "  rig ide [path]                    -> Open a new Host Antigravity IDE / VS Code window at [path]"
+        echo "  rig profile [create|use|list]     -> Switch Git author & AWS profile per client/company"
+        echo "  rig vpn [gp|ovpn|wg|status|down]  -> Connect isolated VPN inside container (zero Host impact)"
+        echo "  rig snapshot [save|restore|list]  -> Time Machine: freeze or restore workstation state"
+        echo "  rig service [up|down] <name>      -> Start/stop sibling containers (postgres, redis, localstack)"
+        echo "  rig sec [path]                    -> Run Security Audit (Gitleaks + Trivy + Semgrep) on [path]"
+        echo "  rig share [port]                  -> Expose container port via temporary public HTTPS tunnel"
+        echo "  rig phone [pair|connect|usb-bridge]-> Connect physical Android phone over Wi-Fi/USB"
+        echo "  rig status                        -> Show live RAM/CPU quota, profile, VPN & sibling containers"
+        echo ""
+        echo -e "${BOLD}OpenRig-Server Connected Session & Security Commands:${RESET}"
+        echo "  rig request <ram> <cpus> [note]   -> Request live RAM/vCPU upgrade from Server Admin (zero restart)"
+        echo "  rig request [status|cancel]       -> Check live RAM/vCPU quota & pending upgrade request status"
+        echo "  rig device [list|revoke|keychain] -> Manage Hardware-UUID bound devices & 1Password TOTP Keychain"
+        echo "  rig lock                          -> Activate Anti-Malware Sandbox Mode (unlock is Host-only!)"
+        echo "  rig -h | rig --help               -> Show this in-container command reference"
+        ;;
+esac
+EOF
+sudo chmod +x /usr/local/bin/rig
 
 # 7. Ensure Zsh loads all installed Version Managers & OpenRig helpers
 cat << 'EOF' > "${RIG_HOME}/.zshrc.openrig"

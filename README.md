@@ -204,11 +204,14 @@ Keep your Host OS free of intrusive VPN kernel extensions:
 
 ---
 
-## 💻 IDE Play & Debug Integration (VS Code / Antigravity / Cursor)
+## 💻 IDE Play & Debug Integration (Antigravity IDE / VS Code / Cursor)
 
-OpenRig includes a pre-configured [`.devcontainer/devcontainer.json`](./.devcontainer/devcontainer.json) and exposes localhost-only debug ports (`127.0.0.1`):
-- **Option A (Attach to Running Container):** Open your IDE, run **Dev Containers: Attach to Running Container...**, and select `/openrig`. Hit **F5 (Play/Debug)** directly using the container's Python, Java, Node, or Flutter SDKs.
-- **Option B (Remote Debug from Host IDE):** Connect your Host IDE debugger to `127.0.0.1:5005` (Java/Kotlin JDWP), `127.0.0.1:5678` (Python `debugpy`), or `127.0.0.1:9229` (Node.js Inspector).
+OpenRig automatically configures a zero-popup Local SSH Bridge (`Host openrig` on `127.0.0.1:2222`) and an In-Container IDE Watcher:
+- **From your Host OS:** Run `rig ide` (or `rig ide /workspace/my-repo`) to open Antigravity IDE / VS Code / Cursor directly attached to your container.
+- **From inside `rig shell`:** Clone any repository, `cd` into it, and run `agy .`, `code .`, `cursor .`, or `rig ide .` — OpenRig automatically opens a **new Host IDE window** attached directly to that directory inside the container.
+- **Context-Aware `rig` CLI (Host vs. In-Container):**
+  - Running `rig -h` on your **Host OS** displays external lifecycle, IDE, and remote server commands (`rig setup`, `rig up`, `rig down`, `rig unlock`, `rig join`, `rig connect`).
+  - Running `rig -h` **inside the container** displays in-container workstation commands (`rig snapshot`, `rig profile`, `rig vpn`, `rig service`, `rig sec`, `rig share`, `rig status`, `rig ide`, and `rig lock`). For Red-Team security, `rig unlock` is strictly blocked inside the container and can only be run from the Host OS.
 
 ---
 
