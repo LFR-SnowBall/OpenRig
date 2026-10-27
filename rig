@@ -216,6 +216,14 @@ cmd_up() {
     echo -e "${CYAN}${BOLD}🚀 Preparing OpenRig Workstation (Profile: ${role})...${RESET}"
     draw_progress 5 "Checking container runtime (Docker / OrbStack)..." "true"
 
+    if ! docker image inspect "$image_name" >/dev/null 2>&1 && [[ -z "$no_cache_flag" ]] && [[ "${1:-}" != "--rebuild" ]] && [[ "$role" != "custom" ]]; then
+        draw_progress 15 "☁️  Checking pre-warmed image 'ghcr.io/lfr-snowball/openrig:${role}'..." "true"
+        if docker pull "ghcr.io/lfr-snowball/openrig:${role}" >/dev/null 2>&1; then
+            docker tag "ghcr.io/lfr-snowball/openrig:${role}" "$image_name"
+            draw_progress 85 "⚡ Pre-warmed image 'openrig:${role}' downloaded from GHCR!" "true"
+        fi
+    fi
+
     if ! docker image inspect "$image_name" >/dev/null 2>&1 || [[ -n "$no_cache_flag" ]] || [[ "${1:-}" == "--rebuild" ]]; then
         [[ "${1:-}" == "--rebuild" ]] && shift || true
         echo -e "${YELLOW}📦 Building modular image '${image_name}' (Detailed log at ${build_log})...${RESET}"

@@ -8,17 +8,24 @@ on:
 
 env:
   REGISTRY: ghcr.io
-  IMAGE_NAME: ${{ github.repository }}
+  IMAGE_NAME: lfr-snowball/openrig
 
 jobs:
-  build-and-push:
-    runs-on: ubuntu-latest
+  build-arch:
+    runs-on: ${{ matrix.arch.runner }}
     permissions:
       contents: read
       packages: write
     strategy:
       fail-fast: false
       matrix:
+        arch:
+          - platform: linux/amd64
+            suffix: amd64
+            runner: ubuntu-24.04
+          - platform: linux/arm64
+            suffix: arm64
+            runner: ubuntu-24.04-arm
         profile:
           - role: fullstack
             py: "true"
@@ -38,6 +45,12 @@ jobs:
             node: "false"
             mob: "false"
             sec: "false"
+          - role: frontend
+            py: "false"
+            jvm: "false"
+            node: "true"
+            mob: "false"
+            sec: "false"
           - role: sec-devops
             py: "true"
             jvm: "false"
@@ -49,9 +62,6 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Set up QEMU (ARM64 + AMD64)
-        uses: docker/setup-qemu-action@v3
-
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
@@ -62,14 +72,14 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Build and push openrig:${{ matrix.profile.role }}
+      - name: Build and push ${{ matrix.profile.role }} (${{ matrix.arch.suffix }})
         uses: docker/build-push-action@v6
         with:
           context: .
           file: ./docker/Dockerfile
-          platforms: linux/amd64,linux/arm64
+          platforms: ${{ matrix.arch.platform }}
           push: true
-          tags: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ matrix.profile.role }}
+          tags: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ matrix.profile.role }}-${{ matrix.arch.suffix }}
           build-args: |
             INSTALL_PYTHON=${{ matrix.profile.py }}
             INSTALL_JVM=${{ matrix.profile.jvm }}
@@ -78,5 +88,30 @@ jobs:
             INSTALL_SEC=${{ matrix.profile.sec }}
             INSTALL_CLOUD=true
             INSTALL_AI=true
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          cache-from: type=gha,scope=${{ matrix.profile.role }}-${{ matrix.arch.suffix }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.profile.role }}-${{ matrix.arch.suffix }}
+
+  merge-manifests:
+    needs: build-arch
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      fail-fast: false
+      matrix:
+        role: [fullstack, backend-python, backend-jvm, frontend, sec-devops]
+    steps:
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Create and push multi-arch manifest for ${{ matrix.role }}
+        run: |
+          docker buildx imagetools create \
+            -t ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ matrix.role }} \
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ matrix.role }}-amd64 \
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ matrix.role }}-arm64
