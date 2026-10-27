@@ -89,6 +89,42 @@ if [ -f /tmp/host-gitconfig ] && [ ! -f "${RIG_HOME}/.gitconfig" ]; then
     fi
 fi
 
+# 3b. Central Brain Split-Brain Architecture (100% Opt-In — Never auto-created unless user runs 'rig brain init/link/clone')
+sudo mkdir -p /var/openrig-vault /etc/openrig
+sudo chown root:root /var/openrig-vault /etc/openrig
+sudo chmod 755 /var/openrig-vault /etc/openrig
+
+if [ "${OPENRIG_SERVER_TENANT:-false}" = "true" ] || [[ "$(hostname)" == rig-* ]]; then
+    mkdir -p /dev/shm/.personal-core
+    chmod 700 /dev/shm/.personal-core
+    if [ ! -f /etc/openrig/dlp-policy.json ]; then
+        sudo tee /etc/openrig/dlp-policy.json >/dev/null << EODLP
+{
+  "tenant_user": "$(hostname)",
+  "dlp_mode": "sanitized",
+  "blocked_terms": []
+}
+EODLP
+        sudo chown root:root /etc/openrig/dlp-policy.json
+        sudo chmod 644 /etc/openrig/dlp-policy.json
+    fi
+fi
+
+# Restore Brain symlinks ONLY if the user previously opted in via 'rig brain'
+if [ -f "${RIG_HOME}/.openrig-profiles/.brain-enabled" ] && [ -d "${RIG_HOME}/.brain" ]; then
+    mkdir -p "${RIG_HOME}/.agents"
+    if [ -f "${RIG_HOME}/.brain/AGENTS.md" ]; then
+        ln -sfn "${RIG_HOME}/.brain/AGENTS.md" "${RIG_HOME}/.agents/AGENTS.md"
+        ln -sfn "${RIG_HOME}/.brain/AGENTS.md" "${RIG_HOME}/CLAUDE.md"
+    fi
+    for bscript in brain-graph brain-task brain-audit; do
+        if [ -f "${RIG_HOME}/.brain/core/scripts/${bscript}.py" ]; then
+            sudo ln -sfn "${RIG_HOME}/.brain/core/scripts/${bscript}.py" "/usr/local/bin/${bscript}"
+            sudo chmod +x "${RIG_HOME}/.brain/core/scripts/${bscript}.py" 2>/dev/null || true
+        fi
+    done
+fi
+
 # 4. Install Browser Bridge for OAuth / AWS SSO / Firebase Login inside Container
 sudo tee /usr/local/bin/rig-browser >/dev/null << 'EOF'
 #!/usr/bin/env bash
@@ -354,9 +390,11 @@ if [ "$EXPECTED_HW" != "ANY" ] && [ "$EXPECTED_HW" != "GUEST_EPHEMERAL" ]; then
     fi
 fi
 
-# 2. If Ephemeral Guest Keychain Login, burn the temporary key immediately upon entry
+# 2. If Ephemeral Guest Keychain Login, burn the temporary key immediately upon entry & wipe personal RAM projection
 if [ "$EXPECTED_HW" = "GUEST_EPHEMERAL" ]; then
     sudo sed -i '/GUEST_EPHEMERAL/d' /etc/openrig/authorized_keys 2>/dev/null || true
+    chmod -R u+w /dev/shm/.personal-core 2>/dev/null || true
+    rm -rf /dev/shm/.personal-core/* 2>/dev/null || true
     echo "🔑 [OpenRig Guest Keychain] Ephemeral pass verified and destroyed (zero trace left on exit)."
 fi
 
@@ -364,8 +402,13 @@ fi
 if [ -n "${SSH_ORIGINAL_COMMAND:-}" ]; then
     exec zsh -ic "$SSH_ORIGINAL_COMMAND"
 else
-    echo "⚡ [OpenRig Session Takeover] Attaching to your live session in /workspace (detaching previous screens)..."
-    exec tmux new-session -A -D -s openrig -c /workspace "zsh -l"
+    # Ensure ephemeral RAM projection is bound strictly to this Hardware UUID and wiped on disconnect
+    echo "${OPENRIG_HW_ID:-LOCAL}:${DEV_NAME}" > /dev/shm/.personal-core/.session-owner 2>/dev/null || true
+    echo "⚡ [OpenRig Session Takeover] Attaching to your isolated session in /workspace (User: $(hostname) | Device: ${DEV_NAME})..."
+    tmux new-session -A -D -s openrig -c /workspace "zsh -l"
+    # On SSH disconnect: wipe in-RAM personal projection & personal AI vault so zero personal files/tokens remain on server RAM
+    chmod -R u+w /dev/shm/.personal-core /dev/shm/.openrig-ai-personal 2>/dev/null || true
+    rm -rf /dev/shm/.personal-core/* /dev/shm/.openrig-ai-personal/* 2>/dev/null || true
 fi
 EOF
 sudo chmod +x /usr/local/bin/rig-session-guard
@@ -504,6 +547,371 @@ esac
 EOF
 sudo chmod +x /usr/local/bin/rig-device
 
+# 6f-bis. Install Split-Brain & Enterprise DLP Firewall Manager (/usr/local/bin/rig-brain)
+sudo tee /usr/local/bin/rig-brain >/dev/null << 'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+
+DLP_POLICY="/etc/openrig/dlp-policy.json"
+RAM_CORE="/dev/shm/.personal-core"
+CORP_BRAIN="/workspace/.company-brain"
+EXPORT_QUEUE="/workspace/.openrig-brain-export.json"
+
+is_server_tenant() {
+    [ "${OPENRIG_SERVER_TENANT:-false}" = "true" ] || [[ "$(hostname)" == rig-* ]]
+}
+
+dlp_scan_file() {
+    local target_file="$1"
+    python3 - "$target_file" "$DLP_POLICY" << 'PY'
+import json, os, re, sys
+
+fpath, policy_path = sys.argv[1], sys.argv[2]
+if not os.path.isfile(fpath):
+    print(f"❌ File not found: {fpath}")
+    sys.exit(1)
+
+txt = open(fpath, errors="ignore").read()
+lines = txt.splitlines()
+
+blocked_terms = []
+if os.path.isfile(policy_path):
+    try:
+        blocked_terms = json.loads(open(policy_path).read()).get("blocked_terms", [])
+    except Exception:
+        pass
+
+rules = [
+    ("DLP-001 (Credit Card PAN)", re.compile(r"\b(?:4[0-9]{12}(?:[0-9]{3})?|5[1-5][0-9]{14}|3[47][0-9]{13})\b")),
+    ("DLP-002 (Live API Key / Token)", re.compile(r"\b(?:AKIA[0-9A-Z]{16}|gh[pousr]_[A-Za-z0-9_]{36,}|AIza[0-9A-Za-z\-_]{35}|sk-[A-Za-z0-9]{20,})\b")),
+    ("DLP-003 (12-Digit AWS Account ID)", re.compile(r"\b\d{12}\b")),
+    ("DLP-004 (Private RFC1918 IP Address)", re.compile(r"\b(?:10\.\d{1,3}\.\d{1,3}\.\d{1,3}|192\.168\.\d{1,3}\.\d{1,3}|172\.(?:1[6-9]|2\d|3[0-1])\.\d{1,3}\.\d{1,3})\b")),
+    ("DLP-005 (Internal Corporate Domain)", re.compile(r"\b[a-zA-Z0-9.-]+\.(?:internal|corp|lan|local|intranet)\b", re.I)),
+    ("DLP-006 (Plaintext Password Assignment)", re.compile(r"(?i)(?:password|passwd|pwd|secret)\s*[:=]\s*['\"][^'\"\{\[\$]{4,}['\"]")),
+]
+
+findings = []
+for idx, line in enumerate(lines, 1):
+    for rname, pat in rules:
+        m = pat.search(line)
+        if m and "411111" not in m.group(0):
+            findings.append((idx, rname, m.group(0)))
+    for term in blocked_terms:
+        if term and re.search(rf"\b{re.escape(term)}\b", line, re.I):
+            findings.append((idx, f"DLP-CORP (Blocked Enterprise Term: '{term}')", term))
+
+if findings:
+    print("🚨 [OpenRig Enterprise DLP & Big-4 Gate] EXPORT BLOCKED — Violations detected:")
+    for ln, rname, match in findings:
+        print(f"   • Line {ln}: {rname} -> '{match}'")
+    print("\n💡 Sanitize all corporate identifiers, IPs, and secrets into generic placeholders before graduating to your Personal Brain.")
+    sys.exit(2)
+
+print("✅ [OpenRig Enterprise DLP & Big-4 Gate] 0 violations found (100% generic & sanitized).")
+PY
+}
+
+activate_brain_symlinks() {
+    mkdir -p "$HOME/.openrig-profiles" "$HOME/.agents"
+    echo "enabled" > "$HOME/.openrig-profiles/.brain-enabled"
+    if [ -f "$HOME/.brain/AGENTS.md" ]; then
+        ln -sfn "$HOME/.brain/AGENTS.md" "$HOME/.agents/AGENTS.md"
+        ln -sfn "$HOME/.brain/AGENTS.md" "$HOME/CLAUDE.md"
+    fi
+    for bscript in brain-graph brain-task brain-audit; do
+        if [ -f "$HOME/.brain/core/scripts/${bscript}.py" ]; then
+            sudo ln -sfn "$HOME/.brain/core/scripts/${bscript}.py" "/usr/local/bin/${bscript}"
+            sudo chmod +x "$HOME/.brain/core/scripts/${bscript}.py" 2>/dev/null || true
+        fi
+    done
+}
+
+ACTION="${1:-status}"
+shift || true
+
+case "$ACTION" in
+    init|create)
+        if is_server_tenant; then
+            TARGET_DIR="$CORP_BRAIN"
+            echo "🏢 [OpenRig Enterprise Brain] Initializing isolated corporate brain in ${TARGET_DIR}..."
+        else
+            TARGET_DIR="/workspace/.brain"
+            echo "🧠 [OpenRig Personal Brain] Initializing new AI Central Brain in ${TARGET_DIR}..."
+        fi
+        mkdir -p "${TARGET_DIR}/core/steering" "${TARGET_DIR}/core/gotchas" "${TARGET_DIR}/skills/generic" "${TARGET_DIR}/tasks" "${TARGET_DIR}/contexts/personal"
+        if [ ! -f "${TARGET_DIR}/AGENTS.md" ]; then
+            cat << 'EOA' > "${TARGET_DIR}/AGENTS.md"
+# 🧠 AGENTS.md — OpenRig AI Central Brain Directive
+
+1. Always consult `core/steering/` and `core/gotchas/` before proposing architectural changes.
+2. Document solved technical gotchas in `core/gotchas/` (100% sanitized — zero secrets, PII, PANs, or internal IPs).
+3. Enforce clean tests, linter compliance, and explicit human authorization before `git commit` or `git push`.
+EOA
+        fi
+        if [ ! -f "${TARGET_DIR}/tasks/BOARD.md" ]; then
+            echo -e "# 📋 Global AI Task Board\n\n| ID | Status | Task | Agent |\n|---|---|---|---|" > "${TARGET_DIR}/tasks/BOARD.md"
+        fi
+        (cd "$TARGET_DIR" && [ ! -d .git ] && git init -q || true)
+        ln -sfn "$TARGET_DIR" "$HOME/.brain"
+        activate_brain_symlinks
+        echo "✅ Brain initialized and linked at ~/.brain (-> ${TARGET_DIR})."
+        ;;
+    clone)
+        REPO_URL="${1:?Usage: rig brain clone <git-repo-url>}"
+        TARGET_DIR="/workspace/.brain"
+        is_server_tenant && TARGET_DIR="$CORP_BRAIN"
+        echo "📥 Cloning Brain repository into ${TARGET_DIR}..."
+        rm -rf "$TARGET_DIR"
+        git clone "$REPO_URL" "$TARGET_DIR"
+        ln -sfn "$TARGET_DIR" "$HOME/.brain"
+        activate_brain_symlinks
+        echo "✅ Brain cloned and activated at ~/.brain (-> ${TARGET_DIR})."
+        ;;
+    off|disable|unlink)
+        rm -f "$HOME/.openrig-profiles/.brain-enabled" "$HOME/.brain" "$HOME/.agents/AGENTS.md" "$HOME/CLAUDE.md" 2>/dev/null || true
+        chmod -R u+w "$RAM_CORE" 2>/dev/null || true
+        rm -rf "${RAM_CORE:?}"/* 2>/dev/null || true
+        echo "⚪ Brain deactivated and unlinked in this container (zero active brain mounts)."
+        ;;
+    status)
+        if [ ! -f "$HOME/.openrig-profiles/.brain-enabled" ] && [ ! -d "$RAM_CORE/core" ]; then
+            echo "🧠 [OpenRig Brain Status — OPT-IN (Currently Inactive)]"
+            echo "   • Brain is disabled by default so every user decides whether to use one."
+            echo "   👉 Create a new Brain from scratch:   rig brain init"
+            echo "   👉 Clone an existing Brain repo:      rig brain clone <git-url>"
+            echo "   👉 Or link your Host ~/.brain (Host): rig brain link"
+            exit 0
+        fi
+        if is_server_tenant; then
+            echo "🧠 [OpenRig Split-Brain Status — Enterprise Server Tenant ($(hostname))]"
+            echo "   • Isolation Scope:   Dedicated Container ($(hostname)) + Private RAM IPC (/dev/shm)"
+            [ -d "$CORP_BRAIN" ] && echo "   • Corporate Brain:   🟢 ACTIVE at ${CORP_BRAIN} (never leaves server)"
+            if [ -d "$RAM_CORE/core" ] || [ -d "$RAM_CORE/skills" ]; then
+                OWNER=$(cat "$RAM_CORE/.session-owner" 2>/dev/null || echo "Active SSH Session")
+                echo "   • Personal Core RAM: 🟢 ACTIVE in /dev/shm/.personal-core (Read-Only | Bound to: ${OWNER})"
+                echo "                        (Zero personal 'contexts/' on server; auto-wiped on SSH disconnect)"
+            else
+                echo "   • Personal Core RAM: ⚪ Not projected in RAM (use 'rig connect --brain' from your laptop)"
+            fi
+            if [ -f "$DLP_POLICY" ]; then
+                python3 - "$DLP_POLICY" << 'PY'
+import json, sys
+d = json.loads(open(sys.argv[1]).read())
+print(f"   • Admin DLP Policy:  mode={d.get('dlp_mode','sanitized').upper()} | blocked_terms={len(d.get('blocked_terms',[]))} corporate terms")
+PY
+            fi
+        else
+            echo "🧠 [OpenRig Brain Status — Personal Workstation ($(hostname))]"
+            if [ -d "$HOME/.brain" ] && [ -r "$HOME/.brain" ]; then
+                echo "   • Brain Status:      🟢 ACTIVE (/home/rig/.brain -> $(readlink -f "$HOME/.brain"))"
+                echo "   • Sandbox Lock:      Inactive (run 'rig lock' to seal Brain during untrusted repo audits)"
+                if [ -x "$HOME/.brain/core/scripts/brain-audit.py" ]; then
+                    echo "   • Big-4 Audit Tool:  Available ('rig brain audit' / 'brain-audit')"
+                fi
+            else
+                echo "   • Brain Status:      🔒 SEALED (Anti-Malware Sandbox Mode active)"
+            fi
+        fi
+        ;;
+    audit)
+        TARGET="${1:-}"
+        if [ -n "$TARGET" ] && [ -f "$TARGET" ]; then
+            dlp_scan_file "$TARGET"
+        elif [ -f "$HOME/.brain/core/scripts/brain-audit.py" ]; then
+            python3 "$HOME/.brain/core/scripts/brain-audit.py"
+        else
+            echo "Usage: rig brain audit <file.md>"
+        fi
+        ;;
+    learn|graduate)
+        FILE="${1:?Usage: rig brain learn <generic-note.md>}"
+        if ! is_server_tenant; then
+            dlp_scan_file "$FILE"
+            mkdir -p "$HOME/.brain/core/gotchas"
+            cp "$FILE" "$HOME/.brain/core/gotchas/$(basename "$FILE")"
+            echo "✅ Saved directly to your Personal Brain: ~/.brain/core/gotchas/$(basename "$FILE")"
+            exit 0
+        fi
+        DLP_MODE="sanitized"
+        if [ -f "$DLP_POLICY" ]; then
+            DLP_MODE=$(python3 -c "import json,sys; print(json.loads(open(sys.argv[1]).read()).get('dlp_mode','sanitized'))" "$DLP_POLICY")
+        fi
+        if [ "$DLP_MODE" = "airgapped" ]; then
+            echo "🚫 [Enterprise DLP Air-Gap Policy] Your Server Administrator has set DLP mode to 'AIRGAPPED'."
+            echo "   Exporting learnings to a personal brain is strictly disabled for this workstation."
+            exit 1
+        fi
+        # Mandatory DLP + Big-4 Scan
+        dlp_scan_file "$FILE"
+        if [ "$DLP_MODE" = "approval" ]; then
+            python3 - "$FILE" "$EXPORT_QUEUE" "$(hostname)" << 'PY'
+import json, os, sys, time
+fpath, qpath, host = sys.argv[1], sys.argv[2], sys.argv[3]
+payload = {
+    "hostname": host,
+    "filename": os.path.basename(fpath),
+    "content": open(fpath).read(),
+    "status": "PENDING_ADMIN_APPROVAL",
+    "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+}
+open(qpath, "w").write(json.dumps(payload, indent=2))
+PY
+            echo "⏳ [Enterprise DLP Approval Gate] File passed automated DLP scan and is queued for Administrator review."
+            echo "   Once approved via 'rig-server brain-requests approve', it will sync to your Personal Brain."
+        else
+            chmod u+w "$RAM_CORE" 2>/dev/null || mkdir -p "$RAM_CORE"
+            mkdir -p "$RAM_CORE/.outbox"
+            cp "$FILE" "$RAM_CORE/.outbox/$(basename "$FILE")"
+            echo "✅ [Enterprise DLP Gate Passed] Note staged in isolated RAM outbox (/dev/shm/.personal-core/.outbox/$(basename "$FILE"))."
+            echo "   It will automatically sync to your laptop's ~/.brain/core/gotchas/ when you disconnect or run 'rig brain pull'."
+        fi
+        ;;
+    flush|wipe)
+        chmod -R u+w "$RAM_CORE" 2>/dev/null || true
+        rm -rf "${RAM_CORE:?}"/* 2>/dev/null || true
+        echo "🧹 In-RAM personal brain projection (/dev/shm/.personal-core) wiped clean."
+        ;;
+    *)
+        echo "🧠 OpenRig Opt-In Split-Brain & Enterprise DLP Manager (rig brain):"
+        echo "  rig brain init                -> Create a new AI Brain from scratch (100% opt-in)"
+        echo "  rig brain clone <git-url>     -> Clone an existing Brain repository into this workstation"
+        echo "  rig brain status              -> Show Brain status, RAM projection, and Enterprise DLP mode"
+        echo "  rig brain audit [file.md]     -> Run Enterprise DLP & Big-4 Security Audit"
+        echo "  rig brain learn <file.md>     -> Sanitize & graduate a generic technical learning through the DLP Gate"
+        echo "  rig brain off                 -> Disable & unlink Brain in this container"
+        ;;
+esac
+EOF
+sudo chmod +x /usr/local/bin/rig-brain
+
+# 6f-ter. Install Dual-Engine AI Session Switcher & Zero-Key Broker Client (/usr/local/bin/rig-ai)
+sudo tee /usr/local/bin/rig-ai >/dev/null << 'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+
+CORP_ENV="/etc/openrig/ai-corporate.env"
+ACTIVE_AI_ENV="$HOME/.openrig-profiles/.ai-active.env"
+CORP_VAULT="$HOME/.openrig-profiles/ai-corporate-vault"
+PERS_VAULT="/dev/shm/.openrig-ai-personal"
+mkdir -p "$HOME/.openrig-profiles"
+
+link_ai_dirs() {
+    local base_dir="$1"
+    mkdir -p "${base_dir}/.claude" "${base_dir}/.gemini" "${base_dir}/.codex" "${base_dir}/.kiro"
+    for tool_dir in .claude .gemini .codex .kiro; do
+        if [ -d "$HOME/${tool_dir}" ] && [ ! -L "$HOME/${tool_dir}" ]; then
+            mv "$HOME/${tool_dir}" "${base_dir}/${tool_dir}-backup" 2>/dev/null || rm -rf "$HOME/${tool_dir}"
+        fi
+        ln -sfn "${base_dir}/${tool_dir}" "$HOME/${tool_dir}"
+    done
+}
+
+SUB="${1:-status}"
+shift || true
+
+case "$SUB" in
+    use|switch)
+        TARGET="${1:?Usage: rig ai use [corporate | personal]}"
+        case "$TARGET" in
+            corporate|corp|company)
+                if [ ! -f "$CORP_ENV" ]; then
+                    echo "❌ No Corporate AI Broker configured on this workstation (/etc/openrig/ai-corporate.env)."
+                    echo "   (In OpenRig-Server, the Administrator configures it via: rig-server ai set --provider bedrock)"
+                    exit 1
+                fi
+                source "$CORP_ENV"
+                link_ai_dirs "$CORP_VAULT"
+                cat << EOA > "$ACTIVE_AI_ENV"
+export OPENRIG_AI_ACTIVE_MODE="corporate"
+export OPENRIG_AI_PROVIDER="${OPENRIG_AI_PROVIDER:-bedrock}"
+EOA
+                case "${OPENRIG_AI_PROVIDER:-bedrock}" in
+                    bedrock)
+                        cat << EOB >> "$ACTIVE_AI_ENV"
+export CLAUDE_CODE_USE_BEDROCK=1
+export ANTHROPIC_BEDROCK_BASE_URL="${OPENRIG_AI_BROKER_URL}"
+export AWS_BEARER_TOKEN_BEDROCK="${OPENRIG_AI_TICKET}"
+export ANTHROPIC_AUTH_TOKEN="${OPENRIG_AI_TICKET}"
+export AWS_REGION="${AWS_REGION:-us-east-1}"
+EOB
+                        ;;
+                    anthropic)
+                        cat << EOB >> "$ACTIVE_AI_ENV"
+unset CLAUDE_CODE_USE_BEDROCK
+export ANTHROPIC_BASE_URL="${OPENRIG_AI_BROKER_URL}"
+export ANTHROPIC_API_KEY="${OPENRIG_AI_TICKET}"
+EOB
+                        ;;
+                    openai|litellm)
+                        cat << EOB >> "$ACTIVE_AI_ENV"
+unset CLAUDE_CODE_USE_BEDROCK
+export OPENAI_BASE_URL="${OPENRIG_AI_BROKER_URL}"
+export OPENAI_API_KEY="${OPENRIG_AI_TICKET}"
+EOB
+                        ;;
+                    gemini)
+                        cat << EOB >> "$ACTIVE_AI_ENV"
+unset CLAUDE_CODE_USE_BEDROCK
+export GOOGLE_GEMINI_BASE_URL="${OPENRIG_AI_BROKER_URL}"
+export GEMINI_API_KEY="${OPENRIG_AI_TICKET}"
+EOB
+                        ;;
+                esac
+                echo "🏢 [OpenRig AI Switcher] Switched to CORPORATE AI (${OPENRIG_AI_PROVIDER^^} via Zero-Key Server Broker)."
+                echo "   • Real corporate keys/AWS credentials NEVER enter this container (authenticated via internal broker ticket)."
+                echo "   • Session & chat history isolated in ${CORP_VAULT}."
+                echo "   💡 Run 'source ~/.zshrc' (or open a new shell) to apply environment variables immediately."
+                ;;
+            personal|pers|my)
+                if [ -f "$CORP_ENV" ]; then
+                    source "$CORP_ENV"
+                    if [ "${OPENRIG_AI_POLICY:-hybrid}" = "corporate-only" ]; then
+                        echo "🚫 [Enterprise AI Policy] Your Server Administrator has enforced 'CORPORATE-ONLY' AI mode."
+                        echo "   Switching to personal AI accounts is disabled on this workstation."
+                        exit 1
+                    fi
+                fi
+                mkdir -p "$PERS_VAULT"
+                chmod 700 "$PERS_VAULT"
+                link_ai_dirs "$PERS_VAULT"
+                cat << 'EOA' > "$ACTIVE_AI_ENV"
+export OPENRIG_AI_ACTIVE_MODE="personal"
+unset CLAUDE_CODE_USE_BEDROCK ANTHROPIC_BEDROCK_BASE_URL AWS_BEARER_TOKEN_BEDROCK ANTHROPIC_AUTH_TOKEN
+unset ANTHROPIC_BASE_URL OPENAI_BASE_URL GOOGLE_GEMINI_BASE_URL
+EOA
+                echo "👤 [OpenRig AI Switcher] Switched to PERSONAL AI (Isolated RAM Vault: ${PERS_VAULT})."
+                echo "   • Zero mixing with corporate AI billing or corporate chat history."
+                echo "   • Stored strictly in private RAM (/dev/shm) and automatically wiped when you disconnect from SSH."
+                echo "   💡 Run 'source ~/.zshrc' (or open a new shell) and log in with your personal AI CLI."
+                ;;
+            *)
+                echo "Usage: rig ai use [corporate | personal]"
+                exit 1
+                ;;
+        esac
+        ;;
+    status|*)
+        ACTIVE_MODE="personal"
+        [ -f "$ACTIVE_AI_ENV" ] && source "$ACTIVE_AI_ENV" && ACTIVE_MODE="${OPENRIG_AI_ACTIVE_MODE:-personal}"
+        echo "🤖 [OpenRig Dual-Engine AI Session Status]"
+        if [ -f "$CORP_ENV" ]; then
+            source "$CORP_ENV"
+            echo "   • Server AI Broker:  🟢 AVAILABLE (Provider: ${OPENRIG_AI_PROVIDER^^} | Policy: ${OPENRIG_AI_POLICY^^})"
+            echo "   • Key Exposure:      🔒 ZERO (Using container-scoped broker ticket ${OPENRIG_AI_TICKET:0:22}...)"
+        else
+            echo "   • Server AI Broker:  ⚪ Not configured (Local Personal Workstation)"
+        fi
+        if [ "$ACTIVE_MODE" = "corporate" ]; then
+            echo "   • Active AI Session: 🏢 CORPORATE (${CORP_VAULT})"
+        else
+            echo "   • Active AI Session: 👤 PERSONAL (Isolated RAM Vault: ${PERS_VAULT})"
+        fi
+        echo "   👉 Switch engine:    rig ai use corporate  |  rig ai use personal"
+        ;;
+esac
+EOF
+sudo chmod +x /usr/local/bin/rig-ai
+
 # 6g. Install Unified In-Container 'rig' CLI (/usr/local/bin/rig)
 sudo tee /usr/local/bin/rig >/dev/null << 'EOF'
 #!/usr/bin/env bash
@@ -569,6 +977,12 @@ case "$ACTION" in
         ;;
     request|req)
         rig-request "$@"
+        ;;
+    brain)
+        rig-brain "$@"
+        ;;
+    ai)
+        rig-ai "$@"
         ;;
     snapshot|snap)
         SUB="${1:-list}"
@@ -637,6 +1051,8 @@ case "$ACTION" in
         banner
         echo -e "${CYAN}${BOLD}📍 Workstation Status (Inside Container '$(hostname)'):${RESET}"
         rig-request status || true
+        rig-ai status || true
+        rig-brain status || true
         rig-profile current || true
         rig-vpn status || true
         echo ""
@@ -656,6 +1072,11 @@ case "$ACTION" in
                 chown root:root /var/run/docker.sock
                 chmod 600 /var/run/docker.sock
             fi
+            if [ -d /var/openrig-vault ]; then
+                chmod 000 /var/openrig-vault
+            fi
+            chmod -R u+w /dev/shm/.personal-core /dev/shm/.openrig-ai-personal 2>/dev/null || true
+            rm -rf /dev/shm/.personal-core/* /dev/shm/.openrig-ai-personal/* 2>/dev/null || true
             gpasswd -d rig docker >/dev/null 2>&1 || true
             gpasswd -d rig sudo >/dev/null 2>&1 || true
             rm -f /etc/sudoers.d/rig*
@@ -663,6 +1084,7 @@ case "$ACTION" in
         '
         echo -e "${GREEN}✅ Workstation JAILED (Sandbox Mode active):${RESET}"
         echo -e "   • Docker Socket locked (0600 root:root) and sudo privileges revoked."
+        echo -e "   • Central Brain Vault (/home/rig/.brain) sealed (000 VFS traversal lock)."
         echo -e "   • To restore privileges, run ${BOLD}rig unlock${RESET} from your Host OS terminal."
         ;;
     unlock)
@@ -682,6 +1104,8 @@ case "$ACTION" in
         echo ""
         echo -e "${BOLD}In-Container Workstation Commands:${RESET}"
         echo "  rig ide [path]                    -> Open a new Host Antigravity IDE / VS Code window at [path]"
+        echo "  rig ai [status|use corp|personal] -> Switch between Shared Corporate AI (Bedrock/Broker) & RAM Personal AI"
+        echo "  rig brain [status|audit|learn]    -> Manage Split-Brain Vault & Enterprise DLP Graduation Gate"
         echo "  rig profile [create|use|list]     -> Switch Git author & AWS profile per client/company"
         echo "  rig vpn [gp|ovpn|wg|status|down]  -> Connect isolated VPN inside container (zero Host impact)"
         echo "  rig snapshot [save|restore|list]  -> Time Machine: freeze or restore workstation state"
@@ -689,13 +1113,13 @@ case "$ACTION" in
         echo "  rig sec [path]                    -> Run Security Audit (Gitleaks + Trivy + Semgrep) on [path]"
         echo "  rig share [port]                  -> Expose container port via temporary public HTTPS tunnel"
         echo "  rig phone [pair|connect|usb-bridge]-> Connect physical Android phone over Wi-Fi/USB"
-        echo "  rig status                        -> Show live RAM/CPU quota, profile, VPN & sibling containers"
+        echo "  rig status                        -> Show live RAM/CPU quota, AI mode, Brain, profile & VPN"
         echo ""
         echo -e "${BOLD}OpenRig-Server Connected Session & Security Commands:${RESET}"
         echo "  rig request <ram> <cpus> [note]   -> Request live RAM/vCPU upgrade from Server Admin (zero restart)"
         echo "  rig request [status|cancel]       -> Check live RAM/vCPU quota & pending upgrade request status"
         echo "  rig device [list|revoke|keychain] -> Manage Hardware-UUID bound devices & 1Password TOTP Keychain"
-        echo "  rig lock                          -> Activate Anti-Malware Sandbox Mode (unlock is Host-only!)"
+        echo "  rig lock                          -> Activate Anti-Malware Sandbox Mode (seals Brain & Docker)"
         echo "  rig -h | rig --help               -> Show this in-container command reference"
         ;;
 esac
@@ -739,6 +1163,14 @@ if [ -f "$HOME/.openrig-profiles/.active" ]; then
     ACTIVE_PROF=$(cat "$HOME/.openrig-profiles/.active")
     [ -f "$HOME/.openrig-profiles/$ACTIVE_PROF/profile.env" ] && source "$HOME/.openrig-profiles/$ACTIVE_PROF/profile.env"
     export AWS_PROFILE GIT_AUTHOR_NAME GIT_COMMITTER_NAME GIT_AUTHOR_EMAIL GIT_COMMITTER_EMAIL
+fi
+
+# Load Active Dual-Engine AI Session (Corporate Zero-Key Broker vs. Personal RAM Vault)
+if [ -f "$HOME/.openrig-profiles/.ai-active.env" ]; then
+    source "$HOME/.openrig-profiles/.ai-active.env"
+elif [ -f "/etc/openrig/ai-corporate.env" ]; then
+    /usr/local/bin/rig-ai use corporate >/dev/null 2>&1 || true
+    [ -f "$HOME/.openrig-profiles/.ai-active.env" ] && source "$HOME/.openrig-profiles/.ai-active.env"
 fi
 
 # Useful Aliases

@@ -202,6 +202,35 @@ Keep your Host OS free of intrusive VPN kernel extensions:
 ./rig request 8g 4 "Running heavy integration test suite"
 ```
 
+### 🧠 7. Opt-In AI Central Brain & Enterprise Split-Brain DLP (`rig brain`)
+OpenRig does **not** force or mount an AI Brain by default — every developer or enterprise decides whether and how to enable it:
+```bash
+# Option A — Create a brand-new AI Brain from scratch inside the container:
+rig brain init
+
+# Option B — Link your existing Host ~/.brain into your personal container (auto-sealed on 'rig lock'):
+rig brain link
+
+# Option C — Connect to an OpenRig-Server projecting ONLY 'core/' & 'skills/generic/' into isolated RAM (--ipc=private):
+rig connect openrig-luis --brain
+
+# Graduate a generic technical learning through the Enterprise DLP & Big-4 Scanner:
+rig brain learn ./redis-timeout-pattern.md
+```
+
+### 🤖 8. Dual-Engine AI Switcher & Zero-Key Corporate AI Broker (`rig ai`)
+When connected to an `OpenRig-Server`, developers can use the company's shared **AWS Bedrock / Anthropic / Gemini / OpenAI / LiteLLM** account **without the corporate API keys or AWS credentials ever entering the container** (authenticated via a container-scoped internal ticket to the Server AI Broker), or switch to an isolated in-RAM personal AI session:
+```bash
+# Check active AI engine & Zero-Key Broker status:
+rig ai status
+
+# Use the company's shared AI Broker (Bedrock SigV4 / Anthropic / Gemini / OpenAI):
+rig ai use corporate
+
+# Switch to your personal AI account in isolated RAM (/dev/shm — auto-wiped on SSH disconnect):
+rig ai use personal
+```
+
 ---
 
 ## 💻 IDE Play & Debug Integration (Antigravity IDE / VS Code / Cursor)

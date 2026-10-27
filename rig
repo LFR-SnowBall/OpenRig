@@ -677,23 +677,39 @@ cmd_guest() {
 }
 
 cmd_connect() {
-    local target="${1:?Usage: ./rig connect <openrig-user | host:port>}"
+    local target="${1:?Usage: ./rig connect <openrig-user | host:port> [--brain]}"
     shift || true
+    local with_brain="false"
+    local ssh_args=()
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --brain|--with-brain) with_brain="true"; shift ;;
+            *) ssh_args+=("$1"); shift ;;
+        esac
+    done
+
     if grep -q "^Host ${target}$" "$HOME/.ssh/config" 2>/dev/null; then
         local hw_id dev_name
         hw_id=$(get_hardware_id)
         dev_name=$(hostname -s 2>/dev/null || hostname)
+        if [ "$with_brain" = "true" ] && [ -d "$HOME/.brain/core" ]; then
+            echo -e "${CYAN}🧠 [Opt-In Split-Brain] Projecting sanitized 'core/' & 'skills/generic/' into isolated remote RAM (/dev/shm/.personal-core)...${RESET}"
+            tar -czf - -C "$HOME/.brain" core $([ -d "$HOME/.brain/skills/generic" ] && echo "skills/generic") 2>/dev/null | \
+                DISPLAY=":0" SSH_ASKPASS="$HOME/.openrig/hw-askpass.sh" SSH_ASKPASS_REQUIRE=force \
+                ssh -o SetEnv="OPENRIG_HW_ID=${hw_id} OPENRIG_DEVICE_NAME=${dev_name}" "$target" \
+                "chmod -R u+w /dev/shm/.personal-core 2>/dev/null || true; mkdir -p /dev/shm/.personal-core; tar -xzf - -C /dev/shm/.personal-core; chmod -R a-w /dev/shm/.personal-core; mkdir -p /dev/shm/.personal-core/.outbox; chmod u+w /dev/shm/.personal-core /dev/shm/.personal-core/.outbox" >/dev/null 2>&1 || true
+        fi
         echo -e "${CYAN}⚡ Connecting to '${target}' with dynamic Motherboard UUID verification & Session Takeover...${RESET}"
         DISPLAY=":0" \
         SSH_ASKPASS="$HOME/.openrig/hw-askpass.sh" \
         SSH_ASKPASS_REQUIRE=force \
-        ssh -o SetEnv="OPENRIG_HW_ID=${hw_id} OPENRIG_DEVICE_NAME=${dev_name}" "$target" "$@"
+        ssh -o SetEnv="OPENRIG_HW_ID=${hw_id} OPENRIG_DEVICE_NAME=${dev_name}" "$target" ${ssh_args[@]+"${ssh_args[@]}"}
         return 0
     fi
     local host="${target%:*}"
     local port="${target##*:}"
     [ "$host" = "$port" ] && port="2201"
-    local alias_name="${1:-openrig-remote}"
+    local alias_name="${ssh_args[0]:-openrig-remote}"
 
     mkdir -p "$HOME/.ssh"
     touch "$HOME/.ssh/config"
@@ -726,6 +742,58 @@ cmd_request() {
     docker exec $TTY_FLAG openrig rig-request "$@"
 }
 
+cmd_brain() {
+    local sub="${1:-status}"
+    case "$sub" in
+        link)
+            shift || true
+            local src="${1:-$HOME/.brain}"
+            if [ ! -d "$src" ]; then
+                echo -e "${RED}❌ No local brain found at ${src}. Create one with 'rig brain init' or specify a path.${RESET}"
+                exit 1
+            fi
+            echo -e "${CYAN}🧠 [Opt-In Brain] Linking Host '${src}' into OpenRig container (/home/rig/.brain)...${RESET}"
+            docker exec -u root openrig bash -c "mkdir -p /var/openrig-vault/host-brain && chown -R rig:rig /var/openrig-vault/host-brain && chmod 755 /var/openrig-vault"
+            docker cp "${src}/." openrig:/var/openrig-vault/host-brain/
+            docker exec -u root openrig chown -R rig:rig /var/openrig-vault/host-brain
+            docker exec openrig bash -c '
+                ln -sfn /var/openrig-vault/host-brain "$HOME/.brain"
+                mkdir -p "$HOME/.openrig-profiles" "$HOME/.agents"
+                echo "enabled" > "$HOME/.openrig-profiles/.brain-enabled"
+                [ -f "$HOME/.brain/AGENTS.md" ] && ln -sfn "$HOME/.brain/AGENTS.md" "$HOME/.agents/AGENTS.md" && ln -sfn "$HOME/.brain/AGENTS.md" "$HOME/CLAUDE.md"
+                for bscript in brain-graph brain-task brain-audit; do
+                    if [ -f "$HOME/.brain/core/scripts/${bscript}.py" ]; then
+                        sudo ln -sfn "$HOME/.brain/core/scripts/${bscript}.py" "/usr/local/bin/${bscript}"
+                        sudo chmod +x "$HOME/.brain/core/scripts/${bscript}.py" 2>/dev/null || true
+                    fi
+                done
+            '
+            echo -e "${GREEN}✅ Brain linked and active inside OpenRig (/home/rig/.brain).${RESET}"
+            ;;
+        pull)
+            shift || true
+            local target="${1:-}"
+            mkdir -p "$HOME/.brain/core/gotchas"
+            if [ -n "$target" ] && grep -q "^Host ${target}$" "$HOME/.ssh/config" 2>/dev/null; then
+                local hw_id dev_name
+                hw_id=$(get_hardware_id)
+                dev_name=$(hostname -s 2>/dev/null || hostname)
+                echo -e "${CYAN}📥 Pulling DLP-verified learnings from remote '${target}' into ~/.brain/core/gotchas/...${RESET}"
+                DISPLAY=":0" SSH_ASKPASS="$HOME/.openrig/hw-askpass.sh" SSH_ASKPASS_REQUIRE=force \
+                    ssh -o SetEnv="OPENRIG_HW_ID=${hw_id} OPENRIG_DEVICE_NAME=${dev_name}" "$target" \
+                    "tar -czf - -C /dev/shm/.personal-core/.outbox . 2>/dev/null" | tar -xzf - -C "$HOME/.brain/core/gotchas/" 2>/dev/null || true
+                echo -e "${GREEN}✅ Remote DLP-verified learnings synced to ~/.brain/core/gotchas/.${RESET}"
+            else
+                docker cp openrig:/home/rig/.brain/. "$HOME/.brain/" >/dev/null 2>&1 || true
+                echo -e "${GREEN}✅ Container brain changes synced back to Host ~/.brain.${RESET}"
+            fi
+            ;;
+        *)
+            docker exec $TTY_FLAG openrig rig-brain "$@"
+            ;;
+    esac
+}
+
 cmd_lock() {
     echo -e "${YELLOW}🔒 Activating Anti-Malware Sandbox Mode in 'openrig'...${RESET}"
     docker exec -u root openrig bash -c '
@@ -733,6 +801,11 @@ cmd_lock() {
             chown root:root /var/run/docker.sock
             chmod 600 /var/run/docker.sock
         fi
+        if [ -d /var/openrig-vault ]; then
+            chmod 000 /var/openrig-vault
+        fi
+        chmod -R u+w /dev/shm/.personal-core 2>/dev/null || true
+        rm -rf /dev/shm/.personal-core/* 2>/dev/null || true
         gpasswd -d rig docker >/dev/null 2>&1 || true
         gpasswd -d rig sudo >/dev/null 2>&1 || true
         rm -f /etc/sudoers.d/rig*
@@ -740,6 +813,7 @@ cmd_lock() {
     '
     echo -e "${GREEN}✅ Workstation JAILED (Sandbox Mode active):${RESET}"
     echo -e "   • Docker Socket locked (0600 root:root)."
+    echo -e "   • Central Brain Vault (/var/openrig-vault) sealed (000 permissions)."
     echo -e "   • Sudo privileges revoked inside the container."
     echo -e "   • Safe for auditing untrusted repos or running third-party npm/pip install."
     echo -e "   👉 To restore privileges from your Host OS run: ${BOLD}rig unlock${RESET}"
@@ -751,11 +825,14 @@ cmd_unlock() {
         if [ -S /var/run/docker.sock ]; then
             chmod 666 /var/run/docker.sock
         fi
+        if [ -d /var/openrig-vault ]; then
+            chmod 755 /var/openrig-vault
+        fi
         usermod -aG sudo rig 2>/dev/null || true
         echo "rig ALL=(ALL) NOPASSWD:ALL" > /etc/sudoers.d/rig
         chmod 440 /etc/sudoers.d/rig
     '
-    echo -e "${GREEN}✅ Docker and sudo privileges restored in 'openrig'.${RESET}"
+    echo -e "${GREEN}✅ Docker, Brain Vault, and sudo privileges restored in 'openrig'.${RESET}"
 }
 
 cmd_status() {
@@ -797,6 +874,8 @@ case "$ACTION" in
     share|tunnel)    cmd_share "$@" ;;
     device|dev)      cmd_device "$@" ;;
     request|req)     cmd_request "$@" ;;
+    brain)           cmd_brain "$@" ;;
+    ai)              docker exec $TTY_FLAG openrig rig-ai "$@" ;;
     lock|sandbox)    cmd_lock ;;
     unlock)          cmd_unlock ;;
     join|enroll)     cmd_join "$@" ;;
@@ -817,7 +896,9 @@ case "$ACTION" in
         echo "  rig uninstall                     -> Uninstall container & image (preserves ./workspace)"
         echo "  rig lock / rig unlock             -> Toggle Anti-Malware Sandbox Mode (unlock is Host-only)"
         echo ""
-        echo -e "${BOLD}Workstation Tools (Available both on Host & Inside Container):${RESET}"
+        echo -e "${BOLD}Workstation Tools, Dual-Engine AI & Opt-In Brain:${RESET}"
+        echo "  rig ai [status|use corp|personal] -> Switch between Shared Corporate AI (Bedrock/Broker) & RAM Personal AI"
+        echo "  rig brain [init|link|status|learn]-> Opt-in AI Central Brain (disabled by default; user's choice)"
         echo "  rig profile [create|use|list]     -> Isolate Git author & AWS credentials per client/company"
         echo "  rig vpn [gp|ovpn|wg|status|down]  -> Isolated container VPN (GlobalProtect, OpenVPN, WireGuard)"
         echo "  rig snapshot [save|restore|list]  -> Time Machine: freeze or restore workstation state"
@@ -829,7 +910,7 @@ case "$ACTION" in
         echo ""
         echo -e "${BOLD}Remote OpenRig-Server & Zero-Trust Fleet Commands:${RESET}"
         echo "  rig join <srv:7070> --token <t>   -> Bind your machine by Hardware UUID to an OpenRig-Server"
-        echo "  rig connect <openrig-user>        -> Connect to remote workstation (with Session Takeover)"
+        echo "  rig connect <user> [--brain]      -> Connect to remote workstation (optional --brain RAM projection)"
         echo "  rig guest <srv:7070> --user <u>   -> Zero-trace Guest Mode using your TOTP Keychain"
         echo "  rig request <ram> <cpus> [note]   -> Request live RAM or vCPU hot-scaling from Server Manager"
         echo "  rig device [list|revoke|keychain] -> Manage bound devices and your TOTP Keychain"
