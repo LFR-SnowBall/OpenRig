@@ -1,6 +1,6 @@
 # 🤝 Contributing to OpenRig
 
-Thank you for your interest in contributing to **OpenRig** by **Linux Open Source S.A. de C.V.**!
+Thank you for your interest in contributing to **OpenRig**!
 
 ## 🧩 Adding a New Modular Stack
 All modular installation scripts live under `docker/scripts/`:

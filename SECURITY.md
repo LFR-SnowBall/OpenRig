@@ -30,4 +30,3 @@ OpenRig is designed with a **Defense-in-Depth / Zero-Trust** security model cove
 
 If you discover a security vulnerability in `OpenRig` or `OpenRig-Server`, please report it privately to:
 - **Luis Fernando Real (`LFR-SnowBall`)** — `luisitoreal01@gmail.com`
-- **Linux Open Source S.A. de C.V.**

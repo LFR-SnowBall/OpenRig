@@ -139,8 +139,9 @@ echo ""
 EOF
 sudo chmod +x /usr/local/bin/rig-browser
 
-# 4b. Install Host IDE Bridge inside Container (code / agy / antigravity / cursor)
-# Allows running 'code .' or 'agy .' inside 'rig shell' to open a new Host IDE window attached to that exact folder inside OpenRig!
+# 4b. Install Host IDE Bridge inside Container (code / antigravity / cursor)
+# Allows running 'code .' or 'antigravity .' inside 'rig shell' to open a new Host IDE window attached to that exact folder inside OpenRig!
+# Note: 'agy' is reserved for the Antigravity CLI terminal agent (/home/rig/.local/bin/agy).
 sudo tee /usr/local/bin/rig-open-ide >/dev/null << 'EOF'
 #!/usr/bin/env bash
 set -e
@@ -160,9 +161,12 @@ echo "$TARGET_PATH" > /workspace/.openrig-ide-trigger
 echo "🚀 [OpenRig IDE Bridge] Opening new Antigravity IDE / VS Code window attached to 'openrig:${TARGET_PATH}'..."
 EOF
 sudo chmod +x /usr/local/bin/rig-open-ide
-for ide_cmd in code agy antigravity cursor; do
+for ide_cmd in code antigravity cursor; do
     sudo ln -sf /usr/local/bin/rig-open-ide "/usr/local/bin/${ide_cmd}"
 done
+if [ -x /home/rig/.local/bin/agy ]; then
+    sudo ln -sf /home/rig/.local/bin/agy /usr/local/bin/agy
+fi
 
 # 5. Install Mobile ADB Helper (Wireless & USB Host Bridge)
 sudo tee /usr/local/bin/rig-phone >/dev/null << 'EOF'
@@ -928,7 +932,7 @@ banner() {
     echo -e "${CYAN}${BOLD}"
     echo "╔══════════════════════════════════════════════════════════════════════════╗"
     echo "║   ⚡ OPENRIG — PORTABLE MODULAR DEV, SEC & AI WORKSTATION                ║"
-    echo "║   By Linux Open Source S.A. de C.V.                                      ║"
+    echo "║   Created by Luis Fernando Real (@LFR-SnowBall)                          ║"
     echo "╚══════════════════════════════════════════════════════════════════════════╝"
     echo -e "${RESET}"
 }

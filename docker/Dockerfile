@@ -6,7 +6,8 @@ FROM ubuntu:24.04
 
 LABEL org.opencontainers.image.title="OpenRig Portable Workstation"
 LABEL org.opencontainers.image.description="Modular, zero-host-pollution developer & security rig in a container"
-LABEL org.opencontainers.image.vendor="Linux Open Source S.A. de C.V. / LFR-SnowBall"
+LABEL org.opencontainers.image.vendor="LFR-SnowBall"
+LABEL org.opencontainers.image.authors="Luis Fernando Real <luisitoreal01@gmail.com>"
 
 # Module toggles (set via .env / './rig setup')
 ARG INSTALL_PYTHON=true

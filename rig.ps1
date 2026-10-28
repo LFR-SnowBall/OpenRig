@@ -18,7 +18,7 @@ $EnvFile = Join-Path $RigDir ".env"
 function Show-Banner {
     Write-Host "╔══════════════════════════════════════════════════════════════════════════╗" -ForegroundColor Cyan
     Write-Host "║   ⚡ OPENRIG — PORTABLE MODULAR DEV, SEC & AI WORKSTATION (WINDOWS)      ║" -ForegroundColor Cyan
-    Write-Host "║   By Linux Open Source S.A. de C.V.                                      ║" -ForegroundColor Cyan
+    Write-Host "║   Created by Luis Fernando Real (@LFR-SnowBall)                          ║" -ForegroundColor Cyan
     Write-Host "╚══════════════════════════════════════════════════════════════════════════╝" -ForegroundColor Cyan
 }
 

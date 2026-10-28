@@ -3,7 +3,6 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](./LICENSE)
 [![Arch: amd64 | arm64](https://img.shields.io/badge/Arch-amd64%20%7C%20arm64-success.svg)](#)
 [![Security: Red-Team Hardened](https://img.shields.io/badge/Security-Red--Team%20Hardened-critical.svg)](./SECURITY.md)
-[![By: Linux Open Source S.A. de C.V.](https://img.shields.io/badge/Organization-Linux%20Open%20Source%20S.A.%20de%20C.V.-0A66C2.svg)](#)
 
 **OpenRig** is an open-source, security-hardened, modular workstation ecosystem in a container. It allows software engineers, tech leads, and security researchers to run complete multi-language development, mobile, cloud, AI, and penetration-testing stacks while keeping their **Host OS (macOS Apple Silicon, Windows Gaming PCs, or Linux) 100% free of SDKs, runtime daemons, VPN drivers, and package clutter**.
 
@@ -173,9 +172,9 @@ Keep your Host OS free of intrusive VPN kernel extensions:
 
 ### 🎭 4. Multi-Client Identity & Cloud Profiles (`rig profile`)
 ```bash
-./rig profile create personal "Luis Real" "luisitoreal01@gmail.com" default
-./rig profile create linuxopensource "Luis Real" "lreal@linuxopensource.mx" los-aws
-./rig profile use linuxopensource
+./rig profile create work "Alice Developer" "alice@example.com" prod-aws
+./rig profile create personal "Alice Smith" "alice@personal.me" default
+./rig profile use work
 ./rig profile list
 ```
 
@@ -257,4 +256,4 @@ See [**SECURITY.md**](./SECURITY.md) for the complete Red-Team threat model and 
 ## 📄 License
 
 Released under the [**MIT License**](./LICENSE).  
-Copyright © 2026 **Linux Open Source S.A. de C.V.** / **Luis Fernando Real (`LFR-SnowBall`)**.
+Copyright © 2026 **Luis Fernando Real (`LFR-SnowBall`)**.

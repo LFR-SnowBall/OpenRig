@@ -65,6 +65,7 @@ services:
       - openrig-pub-cache:/home/rig/.pub-cache
       - openrig-aws-config:/home/rig/.aws
       - openrig-ai-config:/home/rig/.config
+      - openrig-gemini-config:/home/rig/.gemini
       - openrig-profiles:/home/rig/.openrig-profiles
     networks:
       - openrig-net
@@ -126,6 +127,7 @@ volumes:
   openrig-pub-cache:
   openrig-aws-config:
   openrig-ai-config:
+  openrig-gemini-config:
   openrig-profiles:
   openrig-postgres-data:
   openrig-redis-data:
