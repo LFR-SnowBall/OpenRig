@@ -100,14 +100,31 @@ sequenceDiagram
 
 ---
 
-## 🚀 Quickstart (macOS, Linux & Windows)
+## 🚀 Quickstart & 1-Line Installer
 
-### 1. Prerequisites
-- **macOS (Apple Silicon / Intel):** [OrbStack](https://orbstack.dev/) *(recommended — uses ~90% less idle RAM than Docker Desktop)* or Docker Desktop.
-- **Windows 10/11:** Docker Desktop with WSL2 backend + PowerShell (`./rig.ps1`).
-- **Linux:** Docker Engine + Docker Compose plugin.
+### ⚡ Universal 1-Line Installer (macOS & Linux)
+Install OpenRig, configure your container engine (OrbStack or Docker), and launch your pre-warmed workstation in seconds:
+```bash
+curl -fsSL https://raw.githubusercontent.com/LFR-SnowBall/OpenRig/main/install.sh | bash
+```
 
-### 2. Clone & Configure Your Workstation
+**On Windows (PowerShell):**
+```powershell
+irm https://raw.githubusercontent.com/LFR-SnowBall/OpenRig/main/install.ps1 | iex
+```
+
+The interactive installer will:
+1. Detect your OS (`macOS Apple Silicon / Intel` or `Linux`) and check for an active container engine.
+2. If no engine is running, let you choose **OrbStack** *(Recommended: 10x lighter, instant boot, zero battery drain)* or **Docker Desktop**, installing it automatically.
+3. Install the global `rig` CLI in `/usr/local/bin/rig` so you can run `rig` from any terminal directory.
+4. Let you select your preset Profile (`fullstack`, `backend-jvm`, `frontend-mobile`, `security-pentest`, `ai-coding`, `minimal`).
+5. Download the pre-compiled multi-arch image from GitHub Container Registry (`ghcr.io/lfr-snowball/openrig:<role>`) for **0 local build wait time**.
+
+---
+
+### 📦 Manual Installation (Optional)
+
+If you prefer to clone and configure manually:
 ```bash
 git clone https://github.com/LFR-SnowBall/OpenRig.git
 cd OpenRig
