@@ -637,7 +637,46 @@ switch ($Command.ToLower()) {
     { $_ -in "vpn" }                 { docker exec -it openrig rig-vpn $ArgsRest }
     { $_ -in "profile", "prof" }     { docker exec -it openrig rig-profile $ArgsRest }
     { $_ -in "share", "tunnel" }     { docker exec -it openrig rig-share $ArgsRest }
-    { $_ -in "device", "dev" }       { docker exec -it openrig rig-device $ArgsRest }
+    { $_ -in "device", "dev" }       {
+        $curr = Get-ActiveContext
+        if ($curr -like "server:*") {
+            $target = $curr -replace '^server:', ''
+            $parts = $target -split ":"
+            $user = if ($parts.Count -gt 2) { $parts[2] } else { "rig" }
+            ssh "openrig-$user" rig-device $ArgsRest
+            return
+        }
+        docker exec -it openrig rig-device $ArgsRest
+    }
+    { $_ -in "sessions", "history" } {
+        $curr = Get-ActiveContext
+        if ($curr -like "server:*") {
+            $target = $curr -replace '^server:', ''
+            $parts = $target -split ":"
+            $user = if ($parts.Count -gt 2) { $parts[2] } else { "rig" }
+            ssh "openrig-$user" rig-sessions $ArgsRest
+            return
+        }
+        docker exec -it openrig rig-sessions $ArgsRest
+    }
+    { $_ -in "web", "web-ide" } {
+        $sub = if ($ArgsRest.Count -gt 0) { $ArgsRest[0] } else { "start" }
+        $curr = Get-ActiveContext
+        if ($curr -like "server:*") {
+            $target = $curr -replace '^server:', ''
+            $parts = $target -split ":"
+            $user = if ($parts.Count -gt 2) { $parts[2] } else { "rig" }
+            ssh "openrig-$user" rig-web-ide $ArgsRest
+            if ($sub -eq "start") {
+                Start-Process "http://localhost:8443/?folder=/workspace"
+            }
+            return
+        }
+        docker exec -it openrig rig-web-ide $ArgsRest
+        if ($sub -eq "start") {
+            Start-Process "http://localhost:8443/?folder=/workspace"
+        }
+    }
     { $_ -in "request", "req" }      { docker exec -it openrig rig-request $ArgsRest }
     { $_ -in "brain" }               { docker exec -it openrig rig-brain $ArgsRest }
     { $_ -in "ai" }                  { docker exec -it openrig rig-ai $ArgsRest }

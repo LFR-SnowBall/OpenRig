@@ -60,6 +60,22 @@ if [ "${OPENRIG_SSH_SERVER:-false}" = "true" ]; then
         sudo sort -u /etc/openrig/authorized_keys -o /etc/openrig/authorized_keys
         sudo chmod 644 /etc/openrig/authorized_keys
     fi
+
+    # Anti-Pivot Security: Prevent container from connecting back to host administrative ports (SSH, SMB, RDP, WinRM)
+    if [ "${OPENRIG_SERVER_TENANT:-false}" = "true" ] && command -v iptables >/dev/null 2>&1; then
+        HOST_IP=$(getent hosts host.docker.internal 2>/dev/null | awk '{print $1}')
+        [ -z "$HOST_IP" ] && HOST_IP=$(ip route 2>/dev/null | awk '/default/ {print $3}')
+        if [ -n "$HOST_IP" ]; then
+            # Allow DNS queries if host is the resolver
+            sudo iptables -A OUTPUT -d "$HOST_IP" -p udp --dport 53 -j ACCEPT 2>/dev/null || true
+            sudo iptables -A OUTPUT -d "$HOST_IP" -p tcp --dport 53 -j ACCEPT 2>/dev/null || true
+            # Allow OpenRig Gatekeeper (AI Broker) on port 7070
+            sudo iptables -A OUTPUT -d "$HOST_IP" -p tcp --dport 7070 -j ACCEPT 2>/dev/null || true
+            # Reject all other connections to host (SSH 22, SMB 445, RDP 3389, WinRM 5985/5986, local host ports)
+            sudo iptables -A OUTPUT -d "$HOST_IP" -j REJECT --reject-with icmp-port-unreachable 2>/dev/null || true
+        fi
+    fi
+
     sudo /usr/sbin/sshd
 fi
 
@@ -196,6 +212,117 @@ exec /home/rig/.local/bin/agy-bin "$@"
 AGY_EOF
     chmod +x /home/rig/.local/bin/agy
 fi
+
+# 4c. Install Web IDE (VS Code in Browser) Service Helper (/usr/local/bin/rig-web-ide)
+sudo tee /usr/local/bin/rig-web-ide >/dev/null << 'EOF'
+#!/usr/bin/env bash
+ACTION="${1:-start}"
+PORT="${2:-8443}"
+PID_FILE="/tmp/code-server.pid"
+LOG_FILE="/tmp/code-server.log"
+KEYCHAIN_FILE="/home/rig/.openrig-profiles/keychain.secret"
+
+ensure_code_server() {
+    if command -v code-server >/dev/null 2>&1; then
+        return 0
+    fi
+    echo "📦 [OpenRig Web IDE] Installing code-server (VS Code Web engine)..."
+    curl -fsSL https://code-server.dev/install.sh | sh >/dev/null 2>&1 || {
+        echo "❌ Failed to download code-server automatically. Run: curl -fsSL https://code-server.dev/install.sh | sh"
+        exit 1
+    }
+}
+
+get_web_password() {
+    if [ -f "$KEYCHAIN_FILE" ] && [ -s "$KEYCHAIN_FILE" ]; then
+        cat "$KEYCHAIN_FILE"
+    else
+        mkdir -p "/home/rig/.openrig-profiles"
+        head -c 10 /dev/urandom | base32 | tr -d '=' > "$KEYCHAIN_FILE"
+        chmod 600 "$KEYCHAIN_FILE"
+        cat "$KEYCHAIN_FILE"
+    fi
+}
+
+case "$ACTION" in
+    start)
+        if [ "${OPENRIG_ENABLE_WEB_IDE:-true}" = "false" ] || [ -f "/workspace/.openrig-disable-web-ide" ]; then
+            echo -e "\033[91m❌ [OpenRig Policy] Web IDE is disabled by security policy (OPENRIG_ENABLE_WEB_IDE=false).\033[0m"
+            echo "   To enable, set OPENRIG_ENABLE_WEB_IDE=true in your environment or run: rig web enable"
+            exit 1
+        fi
+        ensure_code_server
+        PASS=$(get_web_password)
+        if [ -f "$PID_FILE" ] && kill -0 "$(cat "$PID_FILE" 2>/dev/null)" 2>/dev/null; then
+            echo "✔ OpenRig Web IDE is already running on port ${PORT} (PID: $(cat "$PID_FILE"))."
+        else
+            export PASSWORD="$PASS"
+            nohup code-server \
+                --bind-addr "0.0.0.0:${PORT}" \
+                --auth "password" \
+                --disable-telemetry \
+                --disable-update-check \
+                --user-data-dir "/home/rig/.openrig-profiles/code-server" \
+                /workspace > "$LOG_FILE" 2>&1 &
+            echo $! > "$PID_FILE"
+            sleep 1
+            TS=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+            echo "{\"timestamp\": \"$TS\", \"event\": \"WEB_IDE_STARTED\", \"port\": $PORT, \"device\": \"Browser Client\"}" >> /workspace/.openrig-sessions.log 2>/dev/null || true
+            wall "🌐 [OPENRIG WEB IDE] VS Code Web started on port ${PORT} at $(date -u)" 2>/dev/null || true
+            tmux display-message -d 6000 "🌐 [WEB IDE] VS Code Web active on port ${PORT}" 2>/dev/null || true
+        fi
+        echo ""
+        echo "╔════════════════════════════════════════════════════════════════════════════╗"
+        echo "║ 🌐 [OpenRig Web IDE] Visual Studio Code in your Browser                    ║"
+        echo "╠════════════════════════════════════════════════════════════════════════════╣"
+        echo "║  URL:      http://localhost:${PORT}/?folder=/workspace                     ║"
+        echo "║  Password: ${PASS}                                               ║"
+        echo "║                                                                            ║"
+        echo "║  💡 Access securely from any browser. Stop anytime with: 'rig web stop'    ║"
+        echo "╚════════════════════════════════════════════════════════════════════════════╝"
+        echo ""
+        ;;
+    stop)
+        if [ -f "$PID_FILE" ]; then
+            kill -9 "$(cat "$PID_FILE" 2>/dev/null)" 2>/dev/null || true
+            rm -f "$PID_FILE"
+            echo "🛑 OpenRig Web IDE stopped."
+            TS=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+            echo "{\"timestamp\": \"$TS\", \"event\": \"WEB_IDE_STOPPED\", \"device\": \"Browser Client\"}" >> /workspace/.openrig-sessions.log 2>/dev/null || true
+        else
+            pkill -f "code-server" 2>/dev/null || true
+            echo "ℹ️  OpenRig Web IDE is not running."
+        fi
+        ;;
+    status)
+        if [ -f "$PID_FILE" ] && kill -0 "$(cat "$PID_FILE" 2>/dev/null)" 2>/dev/null; then
+            PASS=$(get_web_password)
+            echo "▶️  OpenRig Web IDE is RUNNING on port ${PORT} (PID: $(cat "$PID_FILE"))"
+            echo "   URL:      http://localhost:${PORT}/?folder=/workspace"
+            echo "   Password: ${PASS}"
+        else
+            echo "⏸️  OpenRig Web IDE is STOPPED."
+        fi
+        ;;
+    enable)
+        rm -f /workspace/.openrig-disable-web-ide
+        echo "✔ OpenRig Web IDE enabled."
+        ;;
+    disable)
+        touch /workspace/.openrig-disable-web-ide
+        pkill -f "code-server" 2>/dev/null || true
+        rm -f "$PID_FILE"
+        echo "🛑 OpenRig Web IDE disabled and stopped (policy enforced)."
+        ;;
+    url|pass|password)
+        get_web_password
+        ;;
+    *)
+        echo "Usage: rig-web-ide [start|stop|status|enable|disable|password] [port]"
+        ;;
+esac
+EOF
+sudo chmod +x /usr/local/bin/rig-web-ide
 
 # 5. Install Mobile ADB Helper (Wireless & USB Host Bridge)
 sudo tee /usr/local/bin/rig-phone >/dev/null << 'EOF'
@@ -395,6 +522,10 @@ sudo chmod +x /usr/local/bin/rig-profile
 sudo tee /usr/local/bin/rig-share >/dev/null << 'EOF'
 #!/usr/bin/env bash
 set -e
+if [ "${OPENRIG_ENABLE_SHARE:-true}" = "false" ]; then
+    echo "❌ [OpenRig Policy] Public HTTPS demo tunnels are disabled by policy (OPENRIG_ENABLE_SHARE=false)."
+    exit 1
+fi
 PORT="${1:-8000}"
 echo "🌐 [OpenRig Share] Creating temporary public HTTPS tunnel to http://localhost:${PORT}..."
 echo "   (Press Ctrl+C to close the tunnel when your demo is finished)"
@@ -402,24 +533,132 @@ cloudflared tunnel --url "http://localhost:${PORT}"
 EOF
 sudo chmod +x /usr/local/bin/rig-share
 
-# 6e. Install Hardware-Bound SSH Session Guard & Session Takeover (tmux)
+# 6e. Install Hardware-Bound SSH Session Guard, Session Takeover (tmux) & Device Auditing
+sudo tee /etc/tmux.conf >/dev/null << 'TMUX_CONF'
+set -g history-limit 50000
+set -g mouse on
+set-hook -g client-attached 'run-shell "/usr/local/bin/rig-session-audit attach \"#{client_tty}\" \"#{client_name}\" \"#{client_width}x#{client_height}\" \"#{client_termtype}\""'
+set-hook -g client-detached 'run-shell "/usr/local/bin/rig-session-audit detach \"#{client_tty}\" \"#{client_name}\""'
+set-hook -g client-session-changed 'run-shell "/usr/local/bin/rig-session-audit switch \"#{client_tty}\" \"#{client_name}\" \"#{client_width}x#{client_height}\""'
+TMUX_CONF
+
+sudo tee /usr/local/bin/rig-session-audit >/dev/null << 'EOF'
+#!/usr/bin/env bash
+ACTION="${1:-attach}"
+CLIENT_TTY="${2:-unknown}"
+CLIENT_NAME="${3:-client}"
+CLIENT_RES="${4:-unknown}"
+CLIENT_TERM="${5:-unknown}"
+
+LOG_FILE="/workspace/.openrig-sessions.log"
+mkdir -p /workspace
+
+CLIENT_IP="127.0.0.1"
+if [ -n "${SSH_CLIENT:-}" ]; then
+    CLIENT_IP=$(echo "$SSH_CLIENT" | awk '{print $1}')
+elif [ -n "${SSH_CONNECTION:-}" ]; then
+    CLIENT_IP=$(echo "$SSH_CONNECTION" | awk '{print $1}')
+fi
+
+DEV="${OPENRIG_DEVICE_NAME:-${DEV_NAME:-unknown}}"
+WIDTH=$(echo "$CLIENT_RES" | cut -dx -f1 2>/dev/null || echo "0")
+IS_MOBILE=false
+if [ "$DEV" = "unknown" ] || [ -z "$DEV" ]; then
+    if [ "$WIDTH" -gt 0 ] && [ "$WIDTH" -le 95 ]; then
+        DEV="Mobile Client (SSH/Termius)"
+        IS_MOBILE=true
+    else
+        DEV="Workstation (Desktop/Laptop)"
+    fi
+elif [[ "$DEV" =~ (phone|iphone|android|mobile|termius|blink) ]]; then
+    IS_MOBILE=true
+fi
+
+TS=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+DISPLAY_TS=$(date -u +"%Y-%m-%d %H:%M:%S UTC")
+
+python3 - "$LOG_FILE" "$TS" "$ACTION" "$DEV" "$CLIENT_IP" "$CLIENT_RES" "$CLIENT_TTY" "$IS_MOBILE" << 'PY' 2>/dev/null || true
+import json, sys
+p, ts, act, dev, ip, res, tty, mob = sys.argv[1:9]
+entry = {
+    "timestamp": ts,
+    "event": act.upper(),
+    "device": dev,
+    "client_ip": ip,
+    "resolution": res,
+    "tty": tty,
+    "is_mobile": mob == "true"
+}
+with open(p, "a", encoding="utf-8") as f:
+    f.write(json.dumps(entry) + "\n")
+PY
+
+if [ "$ACTION" = "attach" ]; then
+    ICON="💻"
+    [ "$IS_MOBILE" = "true" ] && ICON="📱"
+    tmux display-message -d 6000 "$ICON [OPENRIG SESSION] Active on $DEV ($CLIENT_IP) [$CLIENT_RES] at $DISPLAY_TS" 2>/dev/null || true
+elif [ "$ACTION" = "detach" ]; then
+    tmux display-message -d 3000 "🔌 [OPENRIG SESSION] Device disconnected ($CLIENT_TTY) at $DISPLAY_TS" 2>/dev/null || true
+fi
+EOF
+sudo chmod +x /usr/local/bin/rig-session-audit
+
+sudo tee /usr/local/bin/rig-sessions >/dev/null << 'EOF'
+#!/usr/bin/env bash
+LOG_FILE="/workspace/.openrig-sessions.log"
+LIMIT="${1:-25}"
+echo -e "\033[1m📱 OpenRig Workstation Session & Device Audit Trail (Last $LIMIT Events):\033[0m\n"
+if [ ! -f "$LOG_FILE" ] || [ ! -s "$LOG_FILE" ]; then
+    echo "  (No session events recorded yet in /workspace/.openrig-sessions.log)"
+    exit 0
+fi
+python3 - "$LOG_FILE" "$LIMIT" << 'PY'
+import json, sys
+p, lim = sys.argv[1], int(sys.argv[2])
+lines = [l.strip() for l in open(p, encoding='utf-8') if l.strip()]
+print(f"  {'TIMESTAMP':<20} {'EVENT':<12} {'DEVICE':<30} {'IP ADDRESS':<16} {'RESOLUTION':<12}")
+print("  " + "-" * 92)
+for line in lines[-lim:]:
+    try:
+        d = json.loads(line)
+        ts = d.get('timestamp', '')[:19].replace('T', ' ')
+        ev = d.get('event', '-')
+        dev = d.get('device', '-')
+        ip = d.get('client_ip', '-')
+        res = d.get('resolution', '-')
+        print(f"  {ts:<20} {ev:<12} {dev:<30} {ip:<16} {res:<12}")
+    except Exception:
+        continue
+print("")
+PY
+EOF
+sudo chmod +x /usr/local/bin/rig-sessions
+
 sudo tee /usr/local/bin/rig-session-guard >/dev/null << 'EOF'
 #!/usr/bin/env bash
 EXPECTED_HW="${1:-ANY}"
 DEV_NAME="${2:-unknown}"
 
-# 1. Verify Hardware Fingerprint Binding (Anti-Key-Theft)
+# 1. Verify Hardware Fingerprint Binding (Anti-Key-Theft) with Mobile / Quick Access fallback
 if [ "$EXPECTED_HW" != "ANY" ] && [ "$EXPECTED_HW" != "GUEST_EPHEMERAL" ]; then
     if [ "${OPENRIG_HW_ID:-}" != "$EXPECTED_HW" ]; then
-        echo ""
-        echo "╔════════════════════════════════════════════════════════════════════════════╗"
-        echo "║ 🚨 SECURITY ALERT [OpenRig Zero-Trust Hardware Lock]                       ║"
-        echo "╠════════════════════════════════════════════════════════════════════════════╣"
-        echo "║ This SSH key is exclusively bound to hardware device: '$DEV_NAME'          ║"
-        echo "║ Your current machine's Hardware UUID DOES NOT MATCH. Access denied.        ║"
-        echo "╚════════════════════════════════════════════════════════════════════════════╝"
-        echo ""
-        exit 1
+        if [ -f "/workspace/.openrig-allow-mobile" ] || [ "${OPENRIG_ALLOW_MOBILE:-false}" = "true" ]; then
+            DEV_NAME="${DEV_NAME:-Alternate Device} (Mobile/Quick Access)"
+            echo "📱 [OpenRig Mobile Access] Connected from alternate/mobile device ($DEV_NAME)."
+        else
+            echo ""
+            echo "╔════════════════════════════════════════════════════════════════════════════╗"
+            echo "║ 🚨 SECURITY ALERT [OpenRig Zero-Trust Hardware Lock]                       ║"
+            echo "╠════════════════════════════════════════════════════════════════════════════╣"
+            echo "║ This SSH key is exclusively bound to hardware device: '$DEV_NAME'          ║"
+            echo "║ Your current machine's Hardware UUID DOES NOT MATCH. Access denied.        ║"
+            echo "║                                                                            ║"
+            echo "║ 💡 To allow access from your phone or another PC temporarily, enable it:  ║"
+            echo "║    Run 'rig device allow-mobile' from your primary authorized workstation. ║"
+            echo "╚════════════════════════════════════════════════════════════════════════════╝"
+            echo ""
+            exit 1
+        fi
     fi
 fi
 
@@ -437,6 +676,7 @@ if [ -n "${SSH_ORIGINAL_COMMAND:-}" ]; then
 else
     # Ensure ephemeral RAM projection is bound strictly to this Hardware UUID and wiped on disconnect
     echo "${OPENRIG_HW_ID:-LOCAL}:${DEV_NAME}" > /dev/shm/.personal-core/.session-owner 2>/dev/null || true
+    export DEV_NAME
     echo "⚡ [OpenRig Session Takeover] Attaching to your isolated session in /workspace (User: $(hostname) | Device: ${DEV_NAME})..."
     tmux new-session -A -D -s openrig -c /workspace "zsh -l"
     # On SSH disconnect: wipe in-RAM personal projection & personal AI vault so zero personal files/tokens remain on server RAM
@@ -573,12 +813,28 @@ case "$ACTION" in
             qrencode -t ANSIUTF8 "$URI" || true
         fi
         ;;
+    allow-mobile|enable-mobile)
+        touch /workspace/.openrig-allow-mobile
+        echo -e "\033[92m📱 [OpenRig Mobile/Quick Access] Temporarily enabled.\033[0m"
+        echo "   You can now connect quickly from your phone (Termius/Blink) or secondary computer."
+        echo "   All sessions and device switches will be logged in /workspace/.openrig-sessions.log."
+        echo "   👉 To restore strict hardware lock at any time: run 'rig device lock-mobile'"
+        ;;
+    lock-mobile|disable-mobile)
+        rm -f /workspace/.openrig-allow-mobile
+        echo -e "\033[93m🔒 [OpenRig Hardware Lock] Mobile/unbound access disabled.\033[0m"
+        echo "   Connections are now restricted strictly to your registered hardware UUIDs."
+        ;;
+    sessions|history|log)
+        /usr/local/bin/rig-sessions "$@"
+        ;;
     *)
-        echo "Usage: rig device [list | revoke <device> | keychain]"
+        echo "Usage: rig device [list | revoke <device> | keychain | allow-mobile | lock-mobile | sessions]"
         ;;
 esac
 EOF
 sudo chmod +x /usr/local/bin/rig-device
+sudo ln -sf /usr/local/bin/rig-sessions /usr/local/bin/rig-session-history 2>/dev/null || true
 
 # 6f-bis. Install Split-Brain & Enterprise DLP Firewall Manager (/usr/local/bin/rig-brain)
 sudo tee /usr/local/bin/rig-brain >/dev/null << 'EOF'
