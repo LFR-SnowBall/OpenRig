@@ -10,6 +10,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [1.1.0] - 2026-11-03
 
 ### Added
+- **Windows Zero-Friction CLI Shim (`rig.cmd` / `rig.bat`):**
+  - Allows running `rig` seamlessly from PowerShell, Command Prompt, and Windows Terminal without typing `.ps1`.
+  - Automatically launches PowerShell with `-ExecutionPolicy Bypass`, eliminating default Windows execution policy blocks (`cannot be loaded because running scripts is disabled on this system`).
+  - Auto-selects PowerShell 7 (`pwsh.exe`) when available, falling back to built-in Windows PowerShell (`powershell.exe`).
+- **WSL2 Pre-Flight & Auto-Installation on Windows:**
+  - `install.ps1` detects if WSL2 is installed and active (`wsl --status`).
+  - Automatically provisions WSL2 kernel components (`wsl --install --no-distribution` / `dism`) before launching the container engine, preventing the "WSL 2 installation is incomplete" failure.
+- **Lightweight Windows Container Engine Selection:**
+  - `install.ps1` now offers a choice between **Rancher Desktop** (Recommended: 100% open-source, native Moby/WSL2, low RAM consumption) and **Docker Desktop**.
+  - `install.ps1` and `rig.ps1` auto-detect and auto-start both Rancher Desktop and Docker Desktop in the background.
+- **Full Feature Parity in Windows (`rig.ps1`):**
+  - Added support for `rig ide`, `rig backup create / restore` (AES-256-CBC PBKDF2), `rig migrate push`, `rig lock / unlock` (sandbox mode), `rig service up / down`, `rig sec`, `rig phone`, `rig brain`, `rig ai`, `rig status`, `rig down`, and `rig uninstall`.
+  - Configured resilient error handling to prevent `NativeCommandError` failures on standard Docker stderr progress streams.
 - **Military-Grade Encrypted Backup (`rig backup create / restore`):**
   - Encrypts entire workstation state (source code, git branches, uncommitted work, `.env`, and client profiles) using **AES-256-CBC with PBKDF2** (100,000 iterations).
   - Produces portable, password-protected `.rigpack` packages.

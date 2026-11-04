@@ -108,10 +108,11 @@ Install OpenRig, configure your container engine (OrbStack or Docker), and launc
 curl -fsSL https://raw.githubusercontent.com/LFR-SnowBall/OpenRig/main/install.sh | bash
 ```
 
-**On Windows (PowerShell):**
+**On Windows (PowerShell or Windows Terminal):**
 ```powershell
 irm https://raw.githubusercontent.com/LFR-SnowBall/OpenRig/main/install.ps1 | iex
 ```
+*Note: The Windows installer automatically checks and provisions WSL2, offers a choice between **Rancher Desktop** (Recommended: lightweight, 100% open source, low RAM) and **Docker Desktop**, installs it via winget, and registers the global `rig` command shim (`rig.cmd`) so you can type `rig` from any PowerShell or Command Prompt window without ExecutionPolicy errors.*
 
 The interactive installer will:
 1. Detect your OS (`macOS Apple Silicon / Intel` or `Linux`) and check for an active container engine.
@@ -144,11 +145,12 @@ cd OpenRig
 > mkdir -p ~/.local/bin && ln -sf "$(pwd)/rig" ~/.local/bin/rig
 > ```
 
-**On Windows (PowerShell):**
+**On Windows (PowerShell or CMD):**
 ```powershell
-.\rig.ps1 setup
-.\rig.ps1 up
-.\rig.ps1 shell
+.\rig.cmd setup
+.\rig.cmd up
+.\rig.cmd shell
+# Or simply type 'rig' once added to PATH
 ```
 
 ---
