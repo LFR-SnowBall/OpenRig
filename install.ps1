@@ -88,6 +88,39 @@ function Ensure-WSL2 {
     } else {
         Write-Host "✔ WSL2 is active and available." -ForegroundColor Green
     }
+
+    # Ensure a standard Linux distribution with bash exists (prevents Rancher Desktop Alpine gotchas)
+    try {
+        $distros = wsl.exe -l -q 2>$null | ForEach-Object { $_ -replace '\x00','' } | Where-Object { $_ -match '\S' }
+        $hasBashDistro = $false
+        foreach ($d in $distros) {
+            if ($d -notmatch 'rancher-desktop' -and $d -notmatch 'docker-desktop') {
+                $hasBashDistro = $true
+                break
+            }
+        }
+        if (-not $hasBashDistro) {
+            Write-Host "📦 Ensuring standard Ubuntu WSL distribution is installed (required for bash & scripts)..." -ForegroundColor Cyan
+            Start-Process -FilePath "wsl.exe" -ArgumentList "--install -d Ubuntu --no-launch" -Wait -NoNewWindow -ErrorAction SilentlyContinue
+            wsl.exe --set-default Ubuntu 2>$null | Out-Null
+            Write-Host "✔ Ubuntu WSL distribution configured." -ForegroundColor Green
+        }
+    } catch {}
+}
+
+function Ensure-UnixLineEndings([string]$dir) {
+    if (-not (Test-Path $dir)) { return }
+    Get-ChildItem -Path $dir -Recurse -File -ErrorAction SilentlyContinue | Where-Object {
+        $_.Extension -in ".sh", ".py", ".md", ".env", ".db" -or $_.Name -in "rig", "rig-server", "VERSION", ".gitattributes"
+    } | ForEach-Object {
+        try {
+            $bytes = [System.IO.File]::ReadAllBytes($_.FullName)
+            if ($bytes -contains 13) {
+                $text = [System.IO.File]::ReadAllText($_.FullName)
+                [System.IO.File]::WriteAllText($_.FullName, ($text -replace "`r`n", "`n"))
+            }
+        } catch {}
+    }
 }
 
 function Ensure-ContainerEngine {
@@ -212,6 +245,9 @@ if ($chosenTarget -eq "server") {
         }
     }
 
+    # Normalize Unix line endings (CRLF -> LF) to prevent 'bash\r' and 'set: pipefail\r' errors
+    Ensure-UnixLineEndings $ServerInstallDir
+
     # Add to User PATH
     $userPath = [Environment]::GetEnvironmentVariable("Path", "User")
     if ($userPath -notlike "*$ServerInstallDir*") {
@@ -262,6 +298,9 @@ if (Test-Path (Join-Path $InstallDir ".git")) {
         Remove-Item $zipTmp -Force
     }
 }
+
+# Normalize Unix line endings (CRLF -> LF)
+Ensure-UnixLineEndings $InstallDir
 
 # Add to User PATH & Configure ExecutionPolicy
 $userPath = [Environment]::GetEnvironmentVariable("Path", "User")
