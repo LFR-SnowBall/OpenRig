@@ -35,7 +35,7 @@ if [ "${OPENRIG_SSH_SERVER:-false}" = "true" ]; then
     sudo chmod 644 /etc/openrig/authorized_keys
 
     if ! grep -q "AuthorizedKeysFile /etc/openrig/authorized_keys" /etc/ssh/sshd_config 2>/dev/null; then
-        echo "AcceptEnv OPENRIG_HW_ID OPENRIG_DEVICE_NAME" | sudo tee -a /etc/ssh/sshd_config >/dev/null
+        echo "AcceptEnv OPENRIG_HW_ID OPENRIG_DEVICE_NAME OPENRIG_SSH_ALIAS" | sudo tee -a /etc/ssh/sshd_config >/dev/null
         echo "PasswordAuthentication no" | sudo tee -a /etc/ssh/sshd_config >/dev/null
         echo "AuthorizedKeysFile /etc/openrig/authorized_keys" | sudo tee -a /etc/ssh/sshd_config >/dev/null
     fi
@@ -156,7 +156,21 @@ if [ -n "${VSCODE_IPC_HOOK_CLI:-}" ]; then
     fi
 fi
 
-# 2. Trigger the Host OS IDE Watcher via /workspace/.openrig-ide-trigger
+# 2. Try Reverse SSH Bridge to Host Mac OS (port 7071)
+HOST_ALIAS="${OPENRIG_SSH_ALIAS:-}"
+if [ -z "$HOST_ALIAS" ]; then
+    if [[ "$(hostname)" == rig-* ]]; then
+        HOST_ALIAS="openrig-${HOSTNAME#rig-}"
+    else
+        HOST_ALIAS="openrig"
+    fi
+fi
+if curl -s -m 2 "http://127.0.0.1:7071/open?alias=${HOST_ALIAS}&path=${TARGET_PATH}" 2>/dev/null | grep -q "OK"; then
+    echo "🚀 [OpenRig IDE Bridge] Remote signal sent! Opening Antigravity IDE on your Mac screen attached to '${HOST_ALIAS}:${TARGET_PATH}'..."
+    exit 0
+fi
+
+# 3. Fallback: Trigger the Host OS IDE Watcher via /workspace/.openrig-ide-trigger
 echo "$TARGET_PATH" > /workspace/.openrig-ide-trigger
 echo "🚀 [OpenRig IDE Bridge] Opening new Antigravity IDE / VS Code window attached to 'openrig:${TARGET_PATH}'..."
 EOF
@@ -164,8 +178,16 @@ sudo chmod +x /usr/local/bin/rig-open-ide
 for ide_cmd in code antigravity cursor; do
     sudo ln -sf /usr/local/bin/rig-open-ide "/usr/local/bin/${ide_cmd}"
 done
-if [ -x /home/rig/.local/bin/agy ]; then
-    sudo ln -sf /home/rig/.local/bin/agy /usr/local/bin/agy
+if [ -x /home/rig/.local/bin/agy ] && [ ! -f /home/rig/.local/bin/agy-bin ]; then
+    mv /home/rig/.local/bin/agy /home/rig/.local/bin/agy-bin
+    tee /home/rig/.local/bin/agy >/dev/null << 'AGY_EOF'
+#!/usr/bin/env bash
+if [ "$#" -eq 1 ] && [ -d "$1" ]; then
+    exec /usr/local/bin/rig-open-ide "$1"
+fi
+exec /home/rig/.local/bin/agy-bin "$@"
+AGY_EOF
+    chmod +x /home/rig/.local/bin/agy
 fi
 
 # 5. Install Mobile ADB Helper (Wireless & USB Host Bridge)

@@ -403,6 +403,16 @@ PY
 }
 
 start_ide_bridge_watcher() {
+    local daemon_script="${RIG_DIR}/scripts/ide-bridge-daemon.py"
+    local daemon_pid_file="$HOME/.openrig/ide-bridge-daemon.pid"
+    if [ -f "$daemon_pid_file" ] && kill -0 "$(cat "$daemon_pid_file" 2>/dev/null)" 2>/dev/null; then
+        : # Daemon already alive
+    elif [ -f "$daemon_script" ]; then
+        python3 "$daemon_script" >/dev/null 2>&1 &
+        echo $! > "$daemon_pid_file"
+        disown 2>/dev/null || true
+    fi
+
     local trigger_file="${RIG_DIR}/workspace/.openrig-ide-trigger"
     local cmd_file="${RIG_DIR}/workspace/.openrig-host-cmd"
     local out_file="${RIG_DIR}/workspace/.openrig-host-cmd.out"
@@ -493,6 +503,19 @@ cmd_context() {
             if [ "$target_type" = "local" ]; then
                 echo "local" > "$ctx_file"
                 echo -e "${GREEN}✔ Context switched to: ${BOLD}local${RESET} ('rig shell' and 'rig ide' now target your local container)."
+            elif grep -q "^Host ${target_type}$" "$HOME/.ssh/config" 2>/dev/null || grep -q "^Host openrig-${target_type}$" "$HOME/.ssh/config" 2>/dev/null; then
+                local alias_to_use="$target_type"
+                grep -q "^Host openrig-${target_type}$" "$HOME/.ssh/config" 2>/dev/null && alias_to_use="openrig-${target_type}"
+                local s_host s_port s_user
+                s_host=$(awk -v a="$alias_to_use" '$1=="Host" && $2==a{found=1; next} found && $1=="HostName"{print $2; exit}' "$HOME/.ssh/config")
+                s_port=$(awk -v a="$alias_to_use" '$1=="Host" && $2==a{found=1; next} found && $1=="Port"{print $2; exit}' "$HOME/.ssh/config")
+                s_user=$(awk -v a="$alias_to_use" '$1=="Host" && $2==a{found=1; next} found && $1=="User"{print $2; exit}' "$HOME/.ssh/config")
+                [ -z "$s_port" ] && s_port="2201"
+                [ -z "$s_user" ] && s_user="rig"
+                echo "server:${s_host}:${s_port}:${alias_to_use#openrig-}" > "$ctx_file"
+                echo -e "${GREEN}✔ Context switched to: ${BOLD}${alias_to_use}${RESET} (${s_host}:${s_port})"
+                echo -e "   👉 'rig shell' and 'rig ide' now target this workstation."
+                echo -e "   👉 Return to local anytime with: ${BOLD}rig context use local${RESET}"
             else
                 local srv="$target_type"
                 if [ "$target_type" = "server" ] || [ "$target_type" = "remote" ]; then
@@ -515,13 +538,29 @@ cmd_context() {
             current=$(get_active_context)
             echo -e "${BOLD}Available OpenRig Contexts:${RESET}"
             if [ "$current" = "local" ]; then
-                echo -e "  ${GREEN}* local${RESET}       (Active: Local container on this PC)"
+                echo -e "  ${GREEN}* local${RESET}                 (Active: Local container on this PC)"
             else
-                echo -e "    local       (Local container on this PC)"
+                echo -e "    local                 (Local container on this PC)"
             fi
-            if [[ "$current" == server:* ]]; then
-                local target="${current#server:}"
-                echo -e "  ${CYAN}* server${RESET}      (Active: ${target})"
+            if [ -f "$HOME/.ssh/config" ]; then
+                while read -r alias; do
+                    [ -z "$alias" ] && continue
+                    local s_host s_port
+                    s_host=$(awk -v a="$alias" '$1=="Host" && $2==a{found=1; next} found && $1=="HostName"{print $2; exit}' "$HOME/.ssh/config")
+                    s_port=$(awk -v a="$alias" '$1=="Host" && $2==a{found=1; next} found && $1=="Port"{print $2; exit}' "$HOME/.ssh/config")
+                    local is_active=""
+                    if [[ "$current" == server:* ]]; then
+                        local cur_target="${current#server:}"
+                        if [ "$cur_target" = "${s_host}:${s_port}:${alias#openrig-}" ] || [ "${alias#openrig-}" = "$(echo "$cur_target" | cut -d: -f3)" ]; then
+                            is_active="true"
+                        fi
+                    fi
+                    if [ "$is_active" = "true" ]; then
+                        echo -e "  ${CYAN}* ${alias}${RESET}     (Active: ${s_host}:${s_port})"
+                    else
+                        echo -e "    ${alias}       (${s_host}:${s_port})"
+                    fi
+                done < <(grep "^Host openrig-" "$HOME/.ssh/config" | awk '{print $2}')
             fi
             ;;
         *)
@@ -545,7 +584,7 @@ cmd_shell() {
         srv_user=$(echo "$target" | cut -d: -f3)
         [ -z "$srv_user" ] && srv_user="rig"
         echo -e "${CYAN}📡 Active context is SERVER (${srv_host}:${srv_port}). Connecting to remote workstation...${RESET}"
-        cmd_connect "${srv_host}:${srv_port}" "$@"
+        cmd_connect "openrig-${srv_user}" "$@"
         return 0
     fi
 
@@ -567,6 +606,8 @@ cmd_shell() {
 
 cmd_ide() {
     local remote_path="${1:-/workspace}"
+    [ "$remote_path" = "." ] && remote_path="/workspace"
+    [[ "$remote_path" != /* ]] && remote_path="/workspace/${remote_path}"
     local current
     current=$(get_active_context)
 
@@ -577,7 +618,7 @@ cmd_ide() {
         srv_port=$(echo "$target" | cut -d: -f2)
         srv_user=$(echo "$target" | cut -d: -f3)
         [ -z "$srv_user" ] && srv_user="rig"
-        echo -e "${CYAN}📡 Active context is SERVER (${srv_host}:${srv_port}). Opening remote workspace...${RESET}"
+        echo -e "${CYAN}📡 Active context is SERVER (${srv_host}:${srv_port}). Opening remote workspace in Antigravity IDE...${RESET}"
 
         local alias_name="openrig-${srv_user}"
         mkdir -p "$HOME/.ssh"
@@ -911,14 +952,36 @@ cmd_migrate() {
 
             local remote_cmd="mkdir -p /workspace && openssl enc -d -aes-256-cbc -pbkdf2 -iter 100000 -pass 'pass:${pass_val}' | tar -xzf - -C /workspace"
             local ssh_id_args=()
-            if [ -f "$HOME/.openrig/local_ide_ed25519" ]; then
+            local ssh_askpass_env=()
+
+            local hw_id dev_name
+            hw_id=$(get_hardware_id)
+            dev_name=$(hostname -s 2>/dev/null || hostname)
+            local ssh_hw_env=(-o "SetEnv=OPENRIG_HW_ID=${hw_id} OPENRIG_DEVICE_NAME=${dev_name}")
+
+            if grep -q "^Host ${target}$" "$HOME/.ssh/config" 2>/dev/null; then
+                ssh_askpass_env=(DISPLAY=":0" SSH_ASKPASS="$HOME/.openrig/hw-askpass.sh" SSH_ASKPASS_REQUIRE=force)
+                echo -e "📡 Streaming encrypted workspace deltas to ${target}..."
+                if tar -czf - -C "${RIG_DIR}/workspace" "${tar_excludes[@]}" . | \
+                    openssl enc -aes-256-cbc -pbkdf2 -iter 100000 -salt -pass "pass:${pass_val}" | \
+                    env "${ssh_askpass_env[@]}" ssh "${ssh_hw_env[@]}" -o StrictHostKeyChecking=accept-new "$target" "$remote_cmd"; then
+                    echo -e "${GREEN}🎉 Migration complete! All projects successfully transferred to ${target}.${RESET}"
+                    echo -e "👉 Connect anytime with: ${BOLD}./rig connect ${target}${RESET}"
+                    return 0
+                fi
+            fi
+
+            if [ -f "$HOME/.openrig/hw-askpass.sh" ] && [ -f "$HOME/.openrig/device_ed25519" ]; then
+                ssh_id_args=(-i "$HOME/.openrig/device_ed25519" -o IdentitiesOnly=yes)
+                ssh_askpass_env=(DISPLAY=":0" SSH_ASKPASS="$HOME/.openrig/hw-askpass.sh" SSH_ASKPASS_REQUIRE=force)
+            elif [ -f "$HOME/.openrig/local_ide_ed25519" ]; then
                 ssh_id_args=(-i "$HOME/.openrig/local_ide_ed25519" -o IdentitiesOnly=yes)
             fi
 
             echo -e "📡 Streaming encrypted workspace deltas to ${host}:${port}..."
             if tar -czf - -C "${RIG_DIR}/workspace" "${tar_excludes[@]}" . | \
                 openssl enc -aes-256-cbc -pbkdf2 -iter 100000 -salt -pass "pass:${pass_val}" | \
-                ssh -o StrictHostKeyChecking=no -p "$port" ${ssh_id_args[@]+"${ssh_id_args[@]}"} "${user}@${host}" "$remote_cmd"; then
+                env ${ssh_askpass_env[@]+"${ssh_askpass_env[@]}"} ssh "${ssh_hw_env[@]}" -o StrictHostKeyChecking=no -p "$port" ${ssh_id_args[@]+"${ssh_id_args[@]}"} "${user}@${host}" "$remote_cmd"; then
                 echo -e "${GREEN}🎉 Migration complete! All projects successfully transferred to ${host}.${RESET}"
                 echo -e "👉 Connect anytime with: ${BOLD}./rig connect ${host}:${port} ${user}${RESET}"
             else
@@ -1033,10 +1096,13 @@ Host openrig-${user}
     IdentityFile ${key_file}
     IdentitiesOnly yes
     StrictHostKeyChecking accept-new
+    ForwardAgent yes
+    SetEnv OPENRIG_HW_ID=${hw_id} OPENRIG_DEVICE_NAME=${dev_name}
     LocalForward 3000 127.0.0.1:3000
     LocalForward 5173 127.0.0.1:5173
     LocalForward 8000 127.0.0.1:8000
     LocalForward 8080 127.0.0.1:8080
+    RemoteForward 7071 127.0.0.1:7071
 EOF
 
     echo -e "${GREEN}✅ Device '${dev_name}' successfully enrolled and previous devices unlinked!${RESET}"
@@ -1052,8 +1118,14 @@ cmd_discover() {
     local my_host
     my_host=$(hostname -s 2>/dev/null || hostname)
 
-    # 1. Probe common mDNS hostnames on LAN
-    local probe_names=("glados.local" "openrig-server.local" "openrig.local" "${my_host}.local")
+    # 1. Probe common mDNS hostnames on LAN and enrolled hosts
+    local probe_names=("openrig-server.local" "openrig.local" "rig-server.local" "${my_host}.local")
+    [ -n "${1:-}" ] && probe_names=("$1" "${probe_names[@]}")
+    if [ -f "$HOME/.ssh/config" ]; then
+        while read -r kh; do
+            [ -n "$kh" ] && probe_names+=("$kh")
+        done < <(grep -A 2 "^Host openrig-" "$HOME/.ssh/config" | awk '$1=="HostName"{print $2}' | sort -u)
+    fi
     for name in "${probe_names[@]}"; do
         if curl -s -m 1 "http://${name}:7070/health" 2>/dev/null | grep -q '"service": *"openrig-gatekeeper"'; then
             candidates+=("$name")
@@ -1143,34 +1215,87 @@ cmd_guest() {
 }
 
 cmd_connect() {
-    local target="${1:?Usage: ./rig connect <openrig-user | host:port> [--brain]}"
-    shift || true
+    local target=""
     local with_brain="false"
     local ssh_args=()
     while [[ $# -gt 0 ]]; do
         case "$1" in
             --brain|--with-brain) with_brain="true"; shift ;;
-            *) ssh_args+=("$1"); shift ;;
+            *)
+                if [ -z "$target" ] && [[ "$1" != *\ * ]] && { grep -q "^Host $1$" "$HOME/.ssh/config" 2>/dev/null || grep -q "^Host openrig-$1$" "$HOME/.ssh/config" 2>/dev/null || [[ "$1" == *:* ]] || [[ "$1" == *.* ]]; }; then
+                    target="$1"
+                else
+                    ssh_args+=("$1")
+                fi
+                shift
+                ;;
         esac
     done
 
-    if grep -q "^Host ${target}$" "$HOME/.ssh/config" 2>/dev/null; then
+    local current
+    current=$(get_active_context)
+
+    # 1. If target is empty, resolve from active context
+    if [ -z "$target" ]; then
+        if [[ "$current" == server:* ]]; then
+            local ctx_user
+            ctx_user=$(echo "${current#server:}" | cut -d: -f3)
+            [ -n "$ctx_user" ] && target="openrig-${ctx_user}"
+        fi
+    fi
+
+    # 2. Intelligent target resolution
+    if [ -n "$target" ]; then
+        if grep -q "^Host ${target}$" "$HOME/.ssh/config" 2>/dev/null; then
+            : # Target matches Host alias directly
+        elif grep -q "^Host openrig-${target}$" "$HOME/.ssh/config" 2>/dev/null; then
+            target="openrig-${target}"
+        elif [[ "$current" == server:* ]]; then
+            local ctx_target="${current#server:}"
+            local ctx_host ctx_port ctx_user
+            ctx_host=$(echo "$ctx_target" | cut -d: -f1)
+            ctx_port=$(echo "$ctx_target" | cut -d: -f2)
+            ctx_user=$(echo "$ctx_target" | cut -d: -f3)
+            if [ "$target" = "$ctx_host" ] || [ "$target" = "${ctx_host}:${ctx_port}" ] || [ "$target" = "$ctx_user" ]; then
+                [ -n "$ctx_user" ] && target="openrig-${ctx_user}"
+            fi
+        fi
+
+        # 3. Check if target matches any HostName in ~/.ssh/config
+        if ! grep -q "^Host ${target}$" "$HOME/.ssh/config" 2>/dev/null; then
+            local clean_target="${target%:*}"
+            local matched_alias
+            matched_alias=$(awk -v h="$clean_target" '$1=="Host"{alias=$2} $1=="HostName" && $2==h{print alias; exit}' "$HOME/.ssh/config" 2>/dev/null || true)
+            if [ -n "$matched_alias" ]; then
+                target="$matched_alias"
+            fi
+        fi
+    fi
+
+    if [ -n "$target" ] && grep -q "^Host ${target}$" "$HOME/.ssh/config" 2>/dev/null; then
+        start_ide_bridge_watcher
         local hw_id dev_name
         hw_id=$(get_hardware_id)
         dev_name=$(hostname -s 2>/dev/null || hostname)
         if [ "$with_brain" = "true" ] && [ -d "$HOME/.brain/core" ]; then
-            echo -e "${CYAN}🧠 [Opt-In Split-Brain] Projecting sanitized 'core/' & 'skills/generic/' into isolated remote RAM (/dev/shm/.personal-core)...${RESET}"
-            tar -czf - -C "$HOME/.brain" core $([ -d "$HOME/.brain/skills/generic" ] && echo "skills/generic") 2>/dev/null | \
+            echo -e "${CYAN}🧠 [Opt-In Split-Brain] Projecting sanitized 'core/', 'skills/generic/' & 'tasks/' into isolated remote RAM (/dev/shm/.personal-core)...${RESET}"
+            COPYFILE_DISABLE=1 tar --no-xattrs -czf - -C "$HOME/.brain" core tasks $([ -d "$HOME/.brain/skills/generic" ] && echo "skills/generic") 2>/dev/null | \
                 DISPLAY=":0" SSH_ASKPASS="$HOME/.openrig/hw-askpass.sh" SSH_ASKPASS_REQUIRE=force \
                 ssh -o SetEnv="OPENRIG_HW_ID=${hw_id} OPENRIG_DEVICE_NAME=${dev_name}" "$target" \
-                "chmod -R u+w /dev/shm/.personal-core 2>/dev/null || true; mkdir -p /dev/shm/.personal-core; tar -xzf - -C /dev/shm/.personal-core; chmod -R a-w /dev/shm/.personal-core; mkdir -p /dev/shm/.personal-core/.outbox; chmod u+w /dev/shm/.personal-core /dev/shm/.personal-core/.outbox" >/dev/null 2>&1 || true
+                "chmod -R u+w /dev/shm/.personal-core 2>/dev/null || true; mkdir -p /dev/shm/.personal-core /dev/shm/.personal-core/.outbox; tar -xzf - -C /dev/shm/.personal-core; ln -sfn /dev/shm/.personal-core ~/.brain; mkdir -p ~/.agents; ln -sfn /dev/shm/.personal-core/core/steering/AGENTS.md ~/.agents/AGENTS.md 2>/dev/null || true; for cmd in brain-task brain-graph brain-audit; do printf '#!/usr/bin/env bash\nexec python3 /dev/shm/.personal-core/core/scripts/%s.py \"\$@\"\n' \"\$cmd\" | sudo tee /usr/local/bin/\$cmd >/dev/null && sudo chmod 755 /usr/local/bin/\$cmd; done; find /dev/shm/.personal-core -name '._*' -delete 2>/dev/null || true" >/dev/null 2>&1 || true
         fi
         echo -e "${CYAN}⚡ Connecting to '${target}' with dynamic Motherboard UUID verification & Session Takeover...${RESET}"
         DISPLAY=":0" \
         SSH_ASKPASS="$HOME/.openrig/hw-askpass.sh" \
         SSH_ASKPASS_REQUIRE=force \
-        ssh -o SetEnv="OPENRIG_HW_ID=${hw_id} OPENRIG_DEVICE_NAME=${dev_name}" "$target" ${ssh_args[@]+"${ssh_args[@]}"}
+        ssh -R 7071:127.0.0.1:7071 -o SetEnv="OPENRIG_HW_ID=${hw_id} OPENRIG_DEVICE_NAME=${dev_name}" "$target" ${ssh_args[@]+"${ssh_args[@]}"}
         return 0
+    fi
+
+    if [ -z "$target" ]; then
+        echo -e "${RED}❌ No connection target specified and no active remote context found.${RESET}"
+        echo -e "👉 Connect with: ${BOLD}./rig connect <user | host:port> [--brain]${RESET}"
+        return 1
     fi
     local host="${target%:*}"
     local port="${target##*:}"
@@ -1329,7 +1454,7 @@ shift || true
 case "$ACTION" in
     setup|init)      cmd_setup ;;
     up|start)        cmd_up "$@" ;;
-    shell|enter)     cmd_shell ;;
+    shell|enter)     cmd_shell "$@" ;;
     ide|code|agy)    cmd_ide "$@" ;;
     service|svc)     cmd_service "$@" ;;
     phone|adb)       cmd_phone "$@" ;;
