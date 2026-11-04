@@ -997,7 +997,7 @@ ASKPASS
 
     echo -e "${CYAN}🔐 Binding this machine (${dev_name} | RAM-derived HW-ID) to OpenRig-Server (${server})...${RESET}"
     local resp
-    resp=$(curl -sS -X POST "http://${server}/enroll" \
+    resp=$(curl -4 -sS -X POST "http://${server}/enroll" \
         -H "Content-Type: application/json" \
         -d "{\"token\":\"${token}\",\"public_key\":\"${pubkey}\",\"hardware_id\":\"${hw_id}\",\"device_name\":\"${dev_name}\"}")
 
