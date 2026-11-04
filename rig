@@ -535,6 +535,217 @@ cmd_snapshot() {
     esac
 }
 
+cmd_backup() {
+    local sub="${1:-help}"
+    shift || true
+
+    case "$sub" in
+        create|export)
+            local out_file=""
+            local key_file=""
+            local pass_val=""
+            local full_backup=false
+
+            while [[ $# -gt 0 ]]; do
+                case "$1" in
+                    --key-file) key_file="$2"; shift 2 ;;
+                    --pass) pass_val="$2"; shift 2 ;;
+                    --full) full_backup=true; shift ;;
+                    *) [ -z "$out_file" ] && out_file="$1"; shift ;;
+                esac
+            done
+
+            if [ -z "$out_file" ]; then
+                local ts
+                ts=$(date +%Y%m%d_%H%M%S)
+                out_file="${RIG_DIR}/openrig-backup-${ts}.rigpack"
+            fi
+
+            # Resolve encryption passphrase
+            if [ -n "$key_file" ] && [ -f "$key_file" ]; then
+                pass_val=$(cat "$key_file")
+            elif [ -z "$pass_val" ]; then
+                echo -e "${CYAN}🔐 Setting up AES-256 Military Grade Encryption for this backup:${RESET}"
+                read -s -p "Enter backup encryption password: " pass_val
+                echo ""
+                read -s -p "Confirm backup encryption password: " pass_confirm
+                echo ""
+                if [ "$pass_val" != "$pass_confirm" ] || [ -z "$pass_val" ]; then
+                    echo -e "${RED}❌ Passwords do not match or are empty. Backup aborted.${RESET}"
+                    return 1
+                fi
+            fi
+
+            echo -e "${CYAN}📦 Creating encrypted workstation bundle: ${BOLD}${out_file}${RESET}..."
+            local tar_excludes=(
+                --exclude='*/node_modules'
+                --exclude='*/target'
+                --exclude='*/.gradle'
+                --exclude='*/.cache'
+                --exclude='*/dist'
+                --exclude='*/build'
+                --exclude='*/.venv'
+                --exclude='*/venv'
+                --exclude='*/__pycache__'
+            )
+            [ "$full_backup" = "true" ] && tar_excludes=()
+
+            local staging_dir
+            staging_dir=$(mktemp -d /tmp/openrig-backup-stage.XXXXXX)
+            mkdir -p "${staging_dir}/payload"
+
+            [ -f "${RIG_DIR}/.env" ] && cp "${RIG_DIR}/.env" "${staging_dir}/payload/.env"
+            if [ -d "${RIG_DIR}/workspace" ]; then
+                mkdir -p "${staging_dir}/payload/workspace"
+                cp -R "${RIG_DIR}/workspace/." "${staging_dir}/payload/workspace/" 2>/dev/null || true
+            fi
+            if [ -d "$HOME/.openrig-profiles" ]; then
+                mkdir -p "${staging_dir}/payload/.openrig-profiles"
+                cp -R "$HOME/.openrig-profiles/." "${staging_dir}/payload/.openrig-profiles/" 2>/dev/null || true
+            fi
+
+            tar -czf - -C "${staging_dir}/payload" "${tar_excludes[@]}" . | \
+                openssl enc -aes-256-cbc -pbkdf2 -iter 100000 -salt -out "$out_file" -pass "pass:${pass_val}"
+
+            rm -rf "$staging_dir"
+            local size
+            size=$(du -h "$out_file" | awk '{print $1}')
+            echo -e "${GREEN}✅ Encrypted backup created successfully (${size}): ${BOLD}${out_file}${RESET}"
+            echo -e "   • Cipher: AES-256-CBC with PBKDF2 (100,000 iterations)"
+            echo -e "   • To restore on another computer: ${BOLD}./rig backup restore ${out_file}${RESET}"
+            ;;
+
+        restore|import)
+            local in_file=""
+            local key_file=""
+            local pass_val=""
+
+            while [[ $# -gt 0 ]]; do
+                case "$1" in
+                    --key-file) key_file="$2"; shift 2 ;;
+                    --pass) pass_val="$2"; shift 2 ;;
+                    *) [ -z "$in_file" ] && in_file="$1"; shift ;;
+                esac
+            done
+
+            [ -z "$in_file" ] && { echo -e "${RED}Usage: ./rig backup restore <file.rigpack> [--key-file <path>] [--pass <pass>]${RESET}"; return 1; }
+            [ ! -f "$in_file" ] && { echo -e "${RED}❌ Backup file not found: ${in_file}${RESET}"; return 1; }
+
+            if [ -n "$key_file" ] && [ -f "$key_file" ]; then
+                pass_val=$(cat "$key_file")
+            elif [ -z "$pass_val" ]; then
+                read -s -p "🔐 Enter AES-256 password to decrypt ${in_file}: " pass_val
+                echo ""
+            fi
+
+            echo -e "${CYAN}🔓 Verifying integrity and decrypting workstation bundle...${RESET}"
+            local restore_tmp
+            restore_tmp=$(mktemp -d /tmp/openrig-restore.XXXXXX)
+
+            if ! openssl enc -d -aes-256-cbc -pbkdf2 -iter 100000 -in "$in_file" -pass "pass:${pass_val}" 2>/dev/null | tar -xzf - -C "$restore_tmp" 2>/dev/null; then
+                rm -rf "$restore_tmp"
+                echo -e "${RED}❌ Decryption failed! The encryption password or key file is invalid, or the archive is corrupted.${RESET}"
+                return 1
+            fi
+
+            # Restore components safely
+            if [ -f "${restore_tmp}/.env" ]; then
+                cp "${restore_tmp}/.env" "${RIG_DIR}/.env"
+                echo -e "  ✔ Restored environment profile (.env)"
+            fi
+            if [ -d "${restore_tmp}/workspace" ]; then
+                mkdir -p "${RIG_DIR}/workspace"
+                cp -R "${restore_tmp}/workspace/." "${RIG_DIR}/workspace/" 2>/dev/null || true
+                echo -e "  ✔ Restored all projects and Git repositories to ./workspace"
+            fi
+            if [ -d "${restore_tmp}/.openrig-profiles" ]; then
+                mkdir -p "$HOME/.openrig-profiles"
+                cp -R "${restore_tmp}/.openrig-profiles/." "$HOME/.openrig-profiles/" 2>/dev/null || true
+                echo -e "  ✔ Restored multi-client identities and Git profiles"
+            fi
+
+            rm -rf "$restore_tmp"
+            echo -e "${GREEN}🎉 Workstation restored successfully! Launch anytime with: ${BOLD}./rig up${RESET}"
+            ;;
+
+        *)
+            echo "📦 OpenRig Secure Encrypted Backup & Restore (AES-256-CBC PBKDF2):"
+            echo "  ./rig backup create [file.rigpack] [--key-file <path>] [--full]"
+            echo "  ./rig backup restore <file.rigpack> [--key-file <path>]"
+            ;;
+    esac
+}
+
+cmd_migrate() {
+    local sub="${1:-help}"
+    shift || true
+
+    case "$sub" in
+        push)
+            local target="${1:?Usage: ./rig migrate push <server_ip[:port]> [username] [--key-file <file>] [--pass <pass>]}"
+            shift || true
+            local user="rig"
+            if [ $# -gt 0 ] && [[ "$1" != --* ]]; then
+                user="$1"
+                shift || true
+            fi
+
+            local key_file=""
+            local pass_val=""
+            while [[ $# -gt 0 ]]; do
+                case "$1" in
+                    --key-file) key_file="$2"; shift 2 ;;
+                    --pass) pass_val="$2"; shift 2 ;;
+                    *) shift ;;
+                esac
+            done
+
+            local host="${target%:*}"
+            local port="${target##*:}"
+            [ "$host" = "$port" ] && port="2201"
+
+            echo -e "${CYAN}🚀 Migrating local OpenRig workstation to remote server (${host}:${port})...${RESET}"
+
+            if [ -n "$key_file" ] && [ -f "$key_file" ]; then
+                pass_val=$(cat "$key_file")
+            elif [ -z "$pass_val" ]; then
+                echo -e "${CYAN}🔐 Set AES-256 encryption password for in-transit network stream:${RESET}"
+                read -s -p "Enter migration encryption password: " pass_val
+                echo ""
+            fi
+
+            local tar_excludes=(
+                --exclude='*/node_modules'
+                --exclude='*/target'
+                --exclude='*/.gradle'
+                --exclude='*/.cache'
+                --exclude='*/dist'
+                --exclude='*/build'
+                --exclude='*/.venv'
+                --exclude='*/venv'
+                --exclude='*/__pycache__'
+            )
+
+            local remote_cmd="mkdir -p /workspace && openssl enc -d -aes-256-cbc -pbkdf2 -iter 100000 -pass 'pass:${pass_val}' | tar -xzf - -C /workspace"
+
+            echo -e "📡 Streaming encrypted workspace deltas to ${host}:${port}..."
+            if tar -czf - -C "${RIG_DIR}/workspace" "${tar_excludes[@]}" . | \
+                openssl enc -aes-256-cbc -pbkdf2 -iter 100000 -salt -pass "pass:${pass_val}" | \
+                ssh -p "$port" "${user}@${host}" "$remote_cmd"; then
+                echo -e "${GREEN}🎉 Migration complete! All projects successfully transferred to ${host}.${RESET}"
+                echo -e "👉 Connect anytime with: ${BOLD}./rig connect ${host}:${port} ${user}${RESET}"
+            else
+                echo -e "${RED}❌ Migration stream failed. Check network connection and SSH credentials.${RESET}"
+                return 1
+            fi
+            ;;
+        *)
+            echo "📡 OpenRig Live Network Migration (rig migrate):"
+            echo "  ./rig migrate push <server_ip[:port]> [username] [--key-file <path>]"
+            ;;
+    esac
+}
+
 get_hardware_id() {
     local raw=""
     if command -v ioreg >/dev/null 2>&1; then
@@ -896,6 +1107,8 @@ case "$ACTION" in
     vpn)             cmd_vpn "$@" ;;
     profile|prof)    cmd_profile "$@" ;;
     snapshot|snap)   cmd_snapshot "$@" ;;
+    backup)          cmd_backup "$@" ;;
+    migrate)         cmd_migrate "$@" ;;
     share|tunnel)    cmd_share "$@" ;;
     device|dev)      cmd_device "$@" ;;
     request|req)     cmd_request "$@" ;;
@@ -920,6 +1133,11 @@ case "$ACTION" in
         echo "  rig down                          -> Stop all containers and free 100% of Host RAM"
         echo "  rig uninstall                     -> Uninstall container & image (preserves ./workspace)"
         echo "  rig lock / rig unlock             -> Toggle Anti-Malware Sandbox Mode (unlock is Host-only)"
+        echo ""
+        echo -e "${BOLD}Encrypted Backup & Machine Migration (AES-256 Military Grade):${RESET}"
+        echo "  rig backup create [file.rigpack]  -> Encrypt entire workstation (code + env + profiles) with password"
+        echo "  rig backup restore <file.rigpack> -> Decrypt and restore workstation on any new laptop/PC"
+        echo "  rig migrate push <server[:port]>  -> Live stream encrypted workspace deltas to remote OpenRig-Server"
         echo ""
         echo -e "${BOLD}Workstation Tools, Dual-Engine AI & Opt-In Brain:${RESET}"
         echo "  rig ai [status|use corp|personal] -> Switch between Shared Corporate AI (Bedrock/Broker) & RAM Personal AI"

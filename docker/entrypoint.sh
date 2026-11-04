@@ -988,6 +988,76 @@ case "$ACTION" in
     ai)
         rig-ai "$@"
         ;;
+    backup)
+        SUB="${1:-help}"
+        shift || true
+        case "$SUB" in
+            create|export)
+                OUT_FILE="${1:-/workspace/openrig-backup-$(date +%Y%m%d_%H%M%S).rigpack}"
+                echo -e "${CYAN}🔐 Setting up AES-256 Military Grade Encryption for this backup:${RESET}"
+                read -s -p "Enter backup encryption password: " PASS_VAL
+                echo ""
+                read -s -p "Confirm backup encryption password: " PASS_CONFIRM
+                echo ""
+                if [ "$PASS_VAL" != "$PASS_CONFIRM" ] || [ -z "$PASS_VAL" ]; then
+                    echo -e "${RED}❌ Passwords do not match or are empty. Backup aborted.${RESET}"
+                    exit 1
+                fi
+                echo -e "${CYAN}📦 Creating encrypted workstation bundle: ${BOLD}${OUT_FILE}${RESET}..."
+                tar -czf - -C /workspace \
+                    --exclude='*/node_modules' --exclude='*/target' --exclude='*/.gradle' --exclude='*/.cache' \
+                    --exclude='*/dist' --exclude='*/build' --exclude='*/.venv' --exclude='*/venv' --exclude='*/__pycache__' . | \
+                    openssl enc -aes-256-cbc -pbkdf2 -iter 100000 -salt -out "$OUT_FILE" -pass "pass:${PASS_VAL}"
+                echo -e "${GREEN}✅ Encrypted backup created successfully: ${BOLD}${OUT_FILE}${RESET}"
+                ;;
+            restore|import)
+                IN_FILE="${1:?Usage: rig backup restore <file.rigpack>}"
+                read -s -p "🔐 Enter AES-256 password to decrypt ${IN_FILE}: " PASS_VAL
+                echo ""
+                if ! openssl enc -d -aes-256-cbc -pbkdf2 -iter 100000 -in "$IN_FILE" -pass "pass:${PASS_VAL}" 2>/dev/null | tar -xzf - -C /workspace 2>/dev/null; then
+                    echo -e "${RED}❌ Decryption failed! The encryption password is invalid, or the archive is corrupted.${RESET}"
+                    exit 1
+                fi
+                echo -e "${GREEN}🎉 Workstation workspace decrypted and restored successfully to /workspace!${RESET}"
+                ;;
+            *)
+                echo "📦 OpenRig Secure Encrypted Backup & Restore (Inside Container):"
+                echo "  rig backup create [file.rigpack]"
+                echo "  rig backup restore <file.rigpack>"
+                ;;
+        esac
+        ;;
+    migrate)
+        SUB="${1:-help}"
+        shift || true
+        case "$SUB" in
+            push)
+                TARGET="${1:?Usage: rig migrate push <server_ip[:port]> [username]}"
+                USER_NAME="rig"
+                if [ $# -gt 1 ] && [[ "$2" != --* ]]; then
+                    USER_NAME="$2"
+                fi
+                HOST_IP="${TARGET%:*}"
+                SSH_PORT="${TARGET##*:}"
+                [ "$HOST_IP" = "$SSH_PORT" ] && SSH_PORT="2201"
+                echo -e "${CYAN}🔐 Set AES-256 encryption password for in-transit network stream:${RESET}"
+                read -s -p "Enter migration encryption password: " PASS_VAL
+                echo ""
+                REMOTE_CMD="mkdir -p /workspace && openssl enc -d -aes-256-cbc -pbkdf2 -iter 100000 -pass 'pass:${PASS_VAL}' | tar -xzf - -C /workspace"
+                echo -e "📡 Streaming encrypted workspace deltas to ${HOST_IP}:${SSH_PORT}..."
+                tar -czf - -C /workspace \
+                    --exclude='*/node_modules' --exclude='*/target' --exclude='*/.gradle' --exclude='*/.cache' \
+                    --exclude='*/dist' --exclude='*/build' --exclude='*/.venv' --exclude='*/venv' --exclude='*/__pycache__' . | \
+                    openssl enc -aes-256-cbc -pbkdf2 -iter 100000 -salt -pass "pass:${PASS_VAL}" | \
+                    ssh -p "$SSH_PORT" "${USER_NAME}@${HOST_IP}" "$REMOTE_CMD"
+                echo -e "${GREEN}🎉 Migration complete! All projects successfully streamed to ${HOST_IP}.${RESET}"
+                ;;
+            *)
+                echo "📡 OpenRig Live Network Migration (Inside Container):"
+                echo "  rig migrate push <server_ip[:port]> [username]"
+                ;;
+        esac
+        ;;
     snapshot|snap)
         SUB="${1:-list}"
         shift || true

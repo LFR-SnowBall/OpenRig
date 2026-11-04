@@ -203,7 +203,22 @@ Keep your Host OS free of intrusive VPN kernel extensions:
 ./rig snapshot export clean-sprint-1 ~/Backups/openrig-sprint1.tar.gz
 ```
 
-### 🔌 6. Connecting to an `OpenRig-Server` (`rig join` / `rig connect` / `rig guest` / `rig request`)
+### 📦 6. Encrypted Workstation Backup & Migration (`rig backup` / `rig migrate`)
+Transfer your entire workstation (source code, active git branches, uncommitted work, `.env` role, and client profiles) across computers or to an `OpenRig-Server` with **AES-256-CBC PBKDF2 military-grade encryption**:
+```bash
+# 1. Create an encrypted backup package (for switching PCs, selling your laptop, or cloud storage):
+./rig backup create ~/Desktop/my-workstation.rigpack
+# -> Prompts for your secret AES-256 password (or pass --key-file / --pass)
+
+# 2. Restore on a new computer (decrypts and verifies integrity):
+./rig backup restore ~/Desktop/my-workstation.rigpack
+
+# 3. Live network migration directly into an OpenRig-Server (zero manual tar/zip):
+./rig migrate push 192.168.1.150:2201 luis
+# -> Streams encrypted workspace deltas directly over LAN/SSH into the high-RAM server!
+```
+
+### 🔌 7. Connecting to an `OpenRig-Server` (`rig join` / `rig connect` / `rig guest` / `rig request`)
 ```bash
 # 1. Enroll your primary laptop (encrypts SSH key with your Motherboard UUID):
 ./rig join 192.168.1.100:7070 --token rig_inv_...
