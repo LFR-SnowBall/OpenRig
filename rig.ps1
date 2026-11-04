@@ -18,6 +18,61 @@ $ErrorActionPreference = "Continue"
 $RigDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $EnvFile = Join-Path $RigDir ".env"
 $WorkspaceDir = Join-Path $RigDir "workspace"
+$RigVersion = "1.2.0"
+$versionFile = Join-Path $RigDir "VERSION"
+if (Test-Path $versionFile) {
+    $RigVersion = (Get-Content $versionFile -Raw).Trim()
+}
+
+function Show-Version {
+    $gitHash = "release"
+    if (Test-Path (Join-Path $RigDir ".git")) {
+        $gitHash = (git -C $RigDir rev-parse --short HEAD 2>$null)
+    }
+    Write-Host "⚡ OpenRig v$RigVersion ($gitHash)" -ForegroundColor Cyan
+}
+
+function Invoke-Update {
+    Write-Host "🔄 Checking for OpenRig updates..." -ForegroundColor Cyan
+    if (Test-Path (Join-Path $RigDir ".git")) {
+        git -C $RigDir fetch --tags origin 2>$null
+        $localHash = (git -C $RigDir rev-parse HEAD 2>$null)
+        $remoteHash = (git -C $RigDir rev-parse origin/main 2>$null)
+        if ($localHash -and $localHash -eq $remoteHash) {
+            Write-Host "✔ OpenRig is already up to date (v$RigVersion)." -ForegroundColor Green
+        } else {
+            Write-Host "📥 Pulling latest improvements..." -ForegroundColor Cyan
+            git -C $RigDir pull --ff-only origin main
+            if (Test-Path $versionFile) {
+                $RigVersion = (Get-Content $versionFile -Raw).Trim()
+            }
+            Write-Host "✔ OpenRig updated successfully to v$RigVersion!" -ForegroundColor Green
+        }
+    } else {
+        Write-Host "📥 Downloading latest OpenRig archive..." -ForegroundColor Cyan
+        $zipTmp = Join-Path $env:TEMP "openrig-update.zip"
+        Invoke-WebRequest -Uri "https://github.com/LFR-SnowBall/OpenRig/archive/refs/heads/main.zip" -OutFile $zipTmp
+        Expand-Archive -Path $zipTmp -DestinationPath $env:TEMP -Force
+        Copy-Item -Path (Join-Path $env:TEMP "OpenRig-main\*") -Destination $RigDir -Recurse -Force
+        Remove-Item $zipTmp -Force
+        Remove-Item (Join-Path $env:TEMP "OpenRig-main") -Recurse -Force
+        Write-Host "✔ OpenRig updated successfully!" -ForegroundColor Green
+    }
+
+    # Refresh pre-warmed image if requested
+    $refreshImage = ($ArgsRest.Count -gt 0 -and ($ArgsRest[0] -in "--image", "-i"))
+    if ($refreshImage) {
+        $role = "fullstack"
+        if (Test-Path $EnvFile) {
+            $roleLine = Get-Content $EnvFile | Where-Object { $_ -match "^OPENRIG_ROLE=" }
+            if ($roleLine) { $role = ($roleLine -split "=")[1].Trim() }
+        }
+        Write-Host "🐳 Pulling latest image: ghcr.io/lfr-snowball/openrig:$role..." -ForegroundColor Cyan
+        docker pull "ghcr.io/lfr-snowball/openrig:$role"
+        docker tag "ghcr.io/lfr-snowball/openrig:$role" "openrig:$role"
+        Write-Host "✔ Workstation image updated." -ForegroundColor Green
+    }
+}
 
 function Show-Banner {
     Write-Host @"
@@ -619,6 +674,8 @@ switch ($Command.ToLower()) {
         Show-Banner
         docker ps --filter "network=openrig-net"
     }
+    { $_ -in "update", "upgrade" }   { Invoke-Update }
+    { $_ -in "version", "-v", "--version" } { Show-Version }
     default {
         Show-Banner
         Write-Host "Commands:" -ForegroundColor Cyan
@@ -630,6 +687,8 @@ switch ($Command.ToLower()) {
         Write-Host "  rig backup restore <file.rigpack> -> Decrypt and restore backup onto this machine"
         Write-Host "  rig migrate push <server:port>    -> Live stream encrypted workspace to OpenRig-Server"
         Write-Host "  rig context [show|use|list]       -> Switch active target (local vs remote server)"
+        Write-Host "  rig update [--image]              -> Update OpenRig to the latest version from GitHub"
+        Write-Host "  rig version                       -> Print current OpenRig version and commit hash"
         Write-Host "  rig lock / rig unlock             -> Toggle Anti-Malware Sandbox Mode"
         Write-Host "  rig service up/down <svc>         -> Run sibling containers (postgres, redis, localstack)"
         Write-Host "  rig status                        -> View running OpenRig containers"

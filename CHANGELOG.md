@@ -7,9 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
-## [1.1.0] - 2026-11-03
+## [1.2.0] - 2026-11-04
 
 ### Added
+- **Self-Updating Engine & Semantic Versioning (`rig update / version`):**
+  - Instant OTA updates from GitHub (`git pull --ff-only`) with CLI shim re-linking across macOS, Linux, and Windows.
+  - Optional `--image` flag to refresh pre-warmed multi-arch container images from GHCR.
+  - Command `rig version` to report semantic version and active commit hash.
 - **Context Switcher (`rig context [show|use local|use server <ip:port>|list]`):**
   - Route daily development commands (`rig shell`, `rig ide .`) seamlessly between your local container and a remote high-RAM desktop or server.
   - Automatically manages SSH port forwarding (3000, 5173, 8000, 8080) and zero-popup Remote-SSH configuration.
@@ -28,6 +32,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Full Feature Parity in Windows (`rig.ps1`):**
   - Added support for `rig ide`, `rig backup create / restore` (AES-256-CBC PBKDF2), `rig migrate push`, `rig lock / unlock` (sandbox mode), `rig service up / down`, `rig sec`, `rig phone`, `rig brain`, `rig ai`, `rig status`, `rig down`, and `rig uninstall`.
   - Configured resilient error handling to prevent `NativeCommandError` failures on standard Docker stderr progress streams.
+
+---
+
+## [1.1.0] - 2026-11-03
+
+### Added
 - **Military-Grade Encrypted Backup (`rig backup create / restore`):**
   - Encrypts entire workstation state (source code, git branches, uncommitted work, `.env`, and client profiles) using **AES-256-CBC with PBKDF2** (100,000 iterations).
   - Produces portable, password-protected `.rigpack` packages.
