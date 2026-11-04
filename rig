@@ -910,11 +910,15 @@ cmd_migrate() {
             )
 
             local remote_cmd="mkdir -p /workspace && openssl enc -d -aes-256-cbc -pbkdf2 -iter 100000 -pass 'pass:${pass_val}' | tar -xzf - -C /workspace"
+            local ssh_id_args=()
+            if [ -f "$HOME/.openrig/local_ide_ed25519" ]; then
+                ssh_id_args=(-i "$HOME/.openrig/local_ide_ed25519" -o IdentitiesOnly=yes)
+            fi
 
             echo -e "📡 Streaming encrypted workspace deltas to ${host}:${port}..."
             if tar -czf - -C "${RIG_DIR}/workspace" "${tar_excludes[@]}" . | \
                 openssl enc -aes-256-cbc -pbkdf2 -iter 100000 -salt -pass "pass:${pass_val}" | \
-                ssh -p "$port" "${user}@${host}" "$remote_cmd"; then
+                ssh -o StrictHostKeyChecking=no -p "$port" ${ssh_id_args[@]+"${ssh_id_args[@]}"} "${user}@${host}" "$remote_cmd"; then
                 echo -e "${GREEN}🎉 Migration complete! All projects successfully transferred to ${host}.${RESET}"
                 echo -e "👉 Connect anytime with: ${BOLD}./rig connect ${host}:${port} ${user}${RESET}"
             else
