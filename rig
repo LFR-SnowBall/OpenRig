@@ -408,7 +408,95 @@ start_ide_bridge_watcher() {
     disown 2>/dev/null || true
 }
 
+get_active_context() {
+    local ctx_file="$HOME/.openrig/context"
+    if [ -f "$ctx_file" ]; then
+        cat "$ctx_file" | tr -d '\r\n'
+    else
+        echo "local"
+    fi
+}
+
+cmd_context() {
+    local sub="${1:-show}"
+    shift || true
+    local ctx_file="$HOME/.openrig/context"
+    mkdir -p "$HOME/.openrig"
+
+    case "$sub" in
+        show|status|current)
+            local current
+            current=$(get_active_context)
+            if [ "$current" = "local" ]; then
+                echo -e "${GREEN}🎯 Active context: ${BOLD}local${RESET} (Local container on this machine)"
+            else
+                local target="${current#server:}"
+                echo -e "${CYAN}🎯 Active context: ${BOLD}server${RESET} (${target})"
+                echo -e "   Commands like 'rig shell' and 'rig ide' currently target this remote server."
+            fi
+            ;;
+        use)
+            local target_type="${1:-local}"
+            shift || true
+            if [ "$target_type" = "local" ]; then
+                echo "local" > "$ctx_file"
+                echo -e "${GREEN}✔ Context switched to: ${BOLD}local${RESET} ('rig shell' and 'rig ide' now target your local container)."
+            else
+                local srv="$target_type"
+                if [ "$target_type" = "server" ] || [ "$target_type" = "remote" ]; then
+                    srv="${1:?Usage: rig context use server <ip[:port]> [username]}"
+                    shift || true
+                fi
+                local srv_user="${1:-rig}"
+                local host="${srv%:*}"
+                local port="${srv##*:}"
+                [ "$host" = "$port" ] && port="2201"
+                echo "server:${host}:${port}:${srv_user}" > "$ctx_file"
+                echo -e "${GREEN}✔ Context switched to: ${BOLD}server${RESET} (${host}:${port}, user: ${srv_user})"
+                echo -e "   👉 'rig shell' will now connect to this server."
+                echo -e "   👉 'rig ide .' will open your remote workspace."
+                echo -e "   👉 Return to local anytime with: ${BOLD}rig context use local${RESET}"
+            fi
+            ;;
+        list|ls)
+            local current
+            current=$(get_active_context)
+            echo -e "${BOLD}Available OpenRig Contexts:${RESET}"
+            if [ "$current" = "local" ]; then
+                echo -e "  ${GREEN}* local${RESET}       (Active: Local container on this PC)"
+            else
+                echo -e "    local       (Local container on this PC)"
+            fi
+            if [[ "$current" == server:* ]]; then
+                local target="${current#server:}"
+                echo -e "  ${CYAN}* server${RESET}      (Active: ${target})"
+            fi
+            ;;
+        *)
+            echo "🎯 OpenRig Context Switcher:"
+            echo "  rig context                             -> Show currently active context (local vs server)"
+            echo "  rig context use local                   -> Target your local container workstation"
+            echo "  rig context use server <ip:port> [user] -> Target remote OpenRig-Server on your network"
+            echo "  rig context list                        -> List configured contexts"
+            ;;
+    esac
+}
+
 cmd_shell() {
+    local current
+    current=$(get_active_context)
+    if [[ "$current" == server:* ]]; then
+        local target="${current#server:}"
+        local srv_host srv_port srv_user
+        srv_host=$(echo "$target" | cut -d: -f1)
+        srv_port=$(echo "$target" | cut -d: -f2)
+        srv_user=$(echo "$target" | cut -d: -f3)
+        [ -z "$srv_user" ] && srv_user="rig"
+        echo -e "${CYAN}📡 Active context is SERVER (${srv_host}:${srv_port}). Connecting to remote workstation...${RESET}"
+        cmd_connect "${srv_host}:${srv_port}" "$@"
+        return 0
+    fi
+
     if ! docker ps --format '{{.Names}}' | grep -q "^openrig$"; then
         cmd_up
     fi
@@ -426,10 +514,53 @@ cmd_shell() {
 }
 
 cmd_ide() {
+    local remote_path="${1:-/workspace}"
+    local current
+    current=$(get_active_context)
+
+    if [[ "$current" == server:* ]]; then
+        local target="${current#server:}"
+        local srv_host srv_port srv_user
+        srv_host=$(echo "$target" | cut -d: -f1)
+        srv_port=$(echo "$target" | cut -d: -f2)
+        srv_user=$(echo "$target" | cut -d: -f3)
+        [ -z "$srv_user" ] && srv_user="rig"
+        echo -e "${CYAN}📡 Active context is SERVER (${srv_host}:${srv_port}). Opening remote workspace...${RESET}"
+
+        local alias_name="openrig-${srv_user}"
+        mkdir -p "$HOME/.ssh"
+        touch "$HOME/.ssh/config"
+        if ! grep -q "^Host ${alias_name}$" "$HOME/.ssh/config" 2>/dev/null; then
+            cat << EOF >> "$HOME/.ssh/config"
+
+Host ${alias_name}
+    HostName ${srv_host}
+    Port ${srv_port}
+    User ${srv_user}
+    ForwardAgent yes
+    LocalForward 3000 127.0.0.1:3000
+    LocalForward 5173 127.0.0.1:5173
+    LocalForward 8000 127.0.0.1:8000
+    LocalForward 8080 127.0.0.1:8080
+EOF
+        fi
+
+        local folder_uri="vscode-remote://ssh-remote+${alias_name}${remote_path}"
+        if [ -x "/Applications/Antigravity IDE.app/Contents/Resources/app/bin/antigravity-ide" ]; then
+            "/Applications/Antigravity IDE.app/Contents/Resources/app/bin/antigravity-ide" --folder-uri "$folder_uri"
+        elif command -v cursor >/dev/null 2>&1; then
+            cursor --folder-uri "$folder_uri"
+        elif command -v code >/dev/null 2>&1; then
+            code --folder-uri "$folder_uri"
+        else
+            echo -e "${YELLOW}ℹ️ Connect your IDE via Remote-SSH to '${alias_name}' -> open '${remote_path}'.${RESET}"
+        fi
+        return 0
+    fi
+
     if ! docker ps --format '{{.Names}}' | grep -q "^openrig$"; then
         cmd_up
     fi
-    local remote_path="${1:-/workspace}"
     # Ensure conflicting Microsoft Remote-SSH extensions in ~/.antigravity-ide do not override Antigravity's built-in OpenSSH resolver
     rm -rf "$HOME/.antigravity-ide/extensions/ms-vscode-remote."* "$HOME/.antigravity-ide/extensions/ms-vscode.remote-"* 2>/dev/null || true
 
@@ -1107,6 +1238,7 @@ case "$ACTION" in
     vpn)             cmd_vpn "$@" ;;
     profile|prof)    cmd_profile "$@" ;;
     snapshot|snap)   cmd_snapshot "$@" ;;
+    context|ctx)     cmd_context "$@" ;;
     backup)          cmd_backup "$@" ;;
     migrate)         cmd_migrate "$@" ;;
     share|tunnel)    cmd_share "$@" ;;
@@ -1138,6 +1270,11 @@ case "$ACTION" in
         echo "  rig backup create [file.rigpack]  -> Encrypt entire workstation (code + env + profiles) with password"
         echo "  rig backup restore <file.rigpack> -> Decrypt and restore workstation on any new laptop/PC"
         echo "  rig migrate push <server[:port]>  -> Live stream encrypted workspace deltas to remote OpenRig-Server"
+        echo ""
+        echo -e "${BOLD}Context Switcher (Local Workstation vs Remote Server):${RESET}"
+        echo "  rig context                       -> Show currently active target (local vs remote server)"
+        echo "  rig context use local             -> Route commands ('rig shell', 'rig ide') to local container"
+        echo "  rig context use server <ip[:port]>-> Route commands to your high-RAM desktop or remote server"
         echo ""
         echo -e "${BOLD}Workstation Tools, Dual-Engine AI & Opt-In Brain:${RESET}"
         echo "  rig ai [status|use corp|personal] -> Switch between Shared Corporate AI (Bedrock/Broker) & RAM Personal AI"

@@ -10,6 +10,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [1.1.0] - 2026-11-03
 
 ### Added
+- **Context Switcher (`rig context [show|use local|use server <ip:port>|list]`):**
+  - Route daily development commands (`rig shell`, `rig ide .`) seamlessly between your local container and a remote high-RAM desktop or server.
+  - Automatically manages SSH port forwarding (3000, 5173, 8000, 8080) and zero-popup Remote-SSH configuration.
+- **Universal Multi-Target Installer (`install.sh` & `install.ps1`):**
+  - Interactive role prompt to deploy **OpenRig Workstation** (Local + Client), **OpenRig-Server** (Central Hub), or **Thin Client** (Zero-Docker remote access).
 - **Windows Zero-Friction CLI Shim (`rig.cmd` / `rig.bat`):**
   - Allows running `rig` seamlessly from PowerShell, Command Prompt, and Windows Terminal without typing `.ps1`.
   - Automatically launches PowerShell with `-ExecutionPolicy Bypass`, eliminating default Windows execution policy blocks (`cannot be loaded because running scripts is disabled on this system`).

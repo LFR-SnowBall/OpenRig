@@ -27,6 +27,7 @@ CLI_TARGET="/usr/local/bin/rig"
 FALLBACK_CLI_TARGET="${HOME}/.local/bin/rig"
 AUTO_YES=false
 START_CONTAINER=true
+CHOSEN_TARGET=""
 CHOSEN_ROLE=""
 CHOSEN_ENGINE=""
 
@@ -55,6 +56,7 @@ Usage:
 
 Options:
   -y, --yes              Non-interactive mode (accept all recommended defaults)
+  --target <target>      Target role: workstation (default) | server | client
   --role <role>          Target profile: fullstack | backend-jvm | frontend-mobile |
                          security-pentest | ai-coding | minimal
   --engine <engine>      Container engine preference: orbstack | docker
@@ -70,6 +72,10 @@ while [[ $# -gt 0 ]]; do
         -y|--yes)
             AUTO_YES=true
             shift
+            ;;
+        --target)
+            CHOSEN_TARGET="$2"
+            shift 2
             ;;
         --role)
             CHOSEN_ROLE="$2"
@@ -141,9 +147,53 @@ main() {
         exit 1
     fi
 
+    # Target Selection (Workstation vs Server vs Client Only)
+    if [ -z "$CHOSEN_TARGET" ]; then
+        if [ "$AUTO_YES" != "true" ]; then
+            echo -e "\n${BOLD}🎯 What would you like to install on this machine?${RESET}"
+            echo -e "  ${BOLD}[1] OpenRig Workstation${RESET} (Local + Client: Docker/OrbStack + offline dev + full CLI) ${GREEN}[Default]${RESET}"
+            echo -e "  ${BOLD}[2] OpenRig-Server${RESET}      (Central Hub: host multi-user workstations on this server)"
+            echo -e "  ${BOLD}[3] OpenRig Client Only${RESET} (Thin Client: connect to remote servers with ZERO local Docker)"
+            local target_choice
+            target_choice=$(ask_prompt "Enter choice [1-3] (default: 1): " "1")
+            case "$target_choice" in
+                2) CHOSEN_TARGET="server" ;;
+                3) CHOSEN_TARGET="client" ;;
+                *) CHOSEN_TARGET="workstation" ;;
+            esac
+        else
+            CHOSEN_TARGET="workstation"
+        fi
+    fi
+
+    # Handle Server Target
+    if [ "$CHOSEN_TARGET" = "server" ]; then
+        local server_dir="${HOME}/.openrig-server"
+        echo -e "\n${BOLD}🏢 Deploying OpenRig-Server Hub into: ${server_dir}${RESET}"
+        if [ -d "${server_dir}/.git" ]; then
+            git -C "$server_dir" pull --ff-only
+        elif [ -d "$server_dir" ]; then
+            echo -e "${YELLOW}Notice: ${server_dir} already exists.${RESET}"
+        else
+            git clone "https://github.com/LFR-SnowBall/OpenRig-Server.git" "$server_dir"
+        fi
+        local srv_bin="/usr/local/bin/rig-server"
+        if [ -w "/usr/local/bin" ] || sudo -n true 2>/dev/null; then
+            sudo ln -sf "${server_dir}/rig-server" "$srv_bin" 2>/dev/null || ln -sf "${server_dir}/rig-server" "$srv_bin"
+        else
+            mkdir -p "${HOME}/.local/bin"
+            ln -sf "${server_dir}/rig-server" "${HOME}/.local/bin/rig-server"
+        fi
+        echo -e "\n${GREEN}🎉 OpenRig-Server is installed!${RESET}"
+        echo -e "  👉 Create workstation: ${BOLD}rig-server user create <name>${RESET}"
+        echo -e "  👉 Inspect requests:   ${BOLD}rig-server requests${RESET}\n"
+        return 0
+    fi
+
     # 2. Check & Setup Container Engine (OrbStack vs Docker)
-    echo -e "\n${BOLD}🐳 Checking Container Engine (Docker / OrbStack)...${RESET}"
-    local engine_ready=false
+    if [ "$CHOSEN_TARGET" != "client" ]; then
+        echo -e "\n${BOLD}🐳 Checking Container Engine (Docker / OrbStack)...${RESET}"
+        local engine_ready=false
 
     if command -v docker >/dev/null 2>&1 && docker info >/dev/null 2>&1; then
         local server_version
@@ -234,6 +284,7 @@ main() {
             fi
         fi
     fi
+    fi
 
     # 3. Clone or Update OpenRig Repository
     echo -e "\n${BOLD}📂 Deploying OpenRig into: ${CYAN}${INSTALL_DIR}${RESET}"
@@ -281,6 +332,16 @@ main() {
         fi
     else
         echo -e "${GREEN}✔ Global CLI installed at: ${BOLD}${CLI_TARGET}${RESET}"
+    fi
+
+    if [ "$CHOSEN_TARGET" = "client" ]; then
+        echo -e "\n${CYAN}══════════════════════════════════════════════════════════════════════════${RESET}"
+        echo -e "${BOLD}🎉 OpenRig Thin Client is installed and ready!${RESET}"
+        echo -e "  👉 Connect to server: ${BOLD}rig connect <server_ip:port>${RESET}"
+        echo -e "  👉 Set active server: ${BOLD}rig context use server <server_ip:port>${RESET}"
+        echo -e "  👉 Open remote IDE:   ${BOLD}rig ide .${RESET}"
+        echo -e "${CYAN}══════════════════════════════════════════════════════════════════════════${RESET}\n"
+        return 0
     fi
 
     # 5. Role Selection (Workstation Profile)

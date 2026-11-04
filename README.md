@@ -97,6 +97,7 @@ sequenceDiagram
 | **🌐 Instant HTTPS Demo Tunnels** | `./rig share <port>` | Expose any local port inside `OpenRig` to a temporary public HTTPS URL via Cloudflare TryCloudflare for client demos or webhook testing. |
 | **📱 Wireless Android Bridge** | `./rig phone [pair\|connect]` | Pair and deploy Flutter/Kotlin apps to a physical Android 11+ phone over Wi-Fi without installing Android Studio or USB drivers on your Host. |
 | **🛡️ Built-in Security Audit Suite** | `./rig sec [path]` | Runs **Gitleaks** (secrets), **Trivy** (SCA vulnerabilities & IaC misconfigurations), and **Semgrep** (SAST) in a single command. |
+| **🎯 Context Switcher (Local vs. Server)** | `./rig context [use local\|server]` | Seamlessly route daily commands (`rig shell`, `rig ide .`) between your local laptop container and a high-RAM home desktop or remote server. |
 
 ---
 
@@ -115,11 +116,14 @@ irm https://raw.githubusercontent.com/LFR-SnowBall/OpenRig/main/install.ps1 | ie
 *Note: The Windows installer automatically checks and provisions WSL2, offers a choice between **Rancher Desktop** (Recommended: lightweight, 100% open source, low RAM) and **Docker Desktop**, installs it via winget, and registers the global `rig` command shim (`rig.cmd`) so you can type `rig` from any PowerShell or Command Prompt window without ExecutionPolicy errors.*
 
 The interactive installer will:
-1. Detect your OS (`macOS Apple Silicon / Intel` or `Linux`) and check for an active container engine.
-2. If no engine is running, let you choose **OrbStack** *(Recommended: 10x lighter, instant boot, zero battery drain)* or **Docker Desktop**, installing it automatically.
-3. Install the global `rig` CLI in `/usr/local/bin/rig` so you can run `rig` from any terminal directory.
-4. Let you select your preset Profile (`fullstack`, `backend-jvm`, `frontend-mobile`, `security-pentest`, `ai-coding`, `minimal`).
-5. Download the pre-compiled multi-arch image from GitHub Container Registry (`ghcr.io/lfr-snowball/openrig:<role>`) for **0 local build wait time**.
+1. Prompt for your installation target:
+   - **`[1] OpenRig Workstation (Local + Client)` [Default]:** Full offline container workstation with Docker/OrbStack/Rancher + global `rig` CLI.
+   - **`[2] OpenRig-Server`:** Central multi-tenant server hub to host workstations on a high-RAM desktop or server.
+   - **`[3] OpenRig Client Only`:** Thin client for laptops to connect to remote servers with **0 local Docker overhead**.
+2. Detect your OS (`macOS`, `Linux`, or `Windows`) and check for an active container engine.
+3. Offer lightweight engines: **OrbStack** on macOS or **Rancher Desktop** on Windows.
+4. Install the global `rig` CLI (`/usr/local/bin/rig` or `rig.cmd` on Windows).
+5. Download pre-warmed multi-arch image from GHCR for instant startup.
 
 ---
 

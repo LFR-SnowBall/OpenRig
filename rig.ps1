@@ -174,10 +174,138 @@ Host openrig
     Write-Host "  👉 Stop and free RAM: rig down`n" -ForegroundColor White
 }
 
+function Get-ActiveContext {
+    $ctxFile = Join-Path $HOME ".openrig\context"
+    if (Test-Path $ctxFile) {
+        return (Get-Content $ctxFile -Raw).Trim()
+    }
+    return "local"
+}
+
+function Invoke-Context {
+    $sub = if ($ArgsRest.Count -gt 0) { $ArgsRest[0] } else { "show" }
+    $ctxFile = Join-Path $HOME ".openrig\context"
+    $openrigDir = Join-Path $HOME ".openrig"
+    if (-not (Test-Path $openrigDir)) { New-Item -ItemType Directory -Path $openrigDir -Force | Out-Null }
+
+    switch ($sub.ToLower()) {
+        { $_ -in "show", "status", "current" } {
+            $curr = Get-ActiveContext
+            if ($curr -eq "local") {
+                Write-Host "🎯 Active context: local (Local container on this PC)" -ForegroundColor Green
+            } else {
+                $target = $curr -replace '^server:', ''
+                Write-Host "🎯 Active context: server ($target)" -ForegroundColor Cyan
+                Write-Host "   Commands like 'rig shell' and 'rig ide' currently target this remote server." -ForegroundColor Gray
+            }
+        }
+        "use" {
+            $targetType = if ($ArgsRest.Count -gt 1) { $ArgsRest[1] } else { "local" }
+            if ($targetType -eq "local") {
+                Set-Content -Path $ctxFile -Value "local" -Encoding UTF8
+                Write-Host "✔ Context switched to: local ('rig shell' and 'rig ide' now target your local container)." -ForegroundColor Green
+            } else {
+                $srv = if ($targetType -in "server", "remote") {
+                    if ($ArgsRest.Count -gt 2) { $ArgsRest[2] } else { "" }
+                } else {
+                    $targetType
+                }
+                if ([string]::IsNullOrWhiteSpace($srv)) {
+                    Write-Host "Usage: rig context use server <ip[:port]> [username]" -ForegroundColor Red
+                    return
+                }
+                $srvUser = if ($ArgsRest.Count -gt 3) { $ArgsRest[3] } else { "rig" }
+                $parts = $srv -split ":"
+                $hostIp = $parts[0]
+                $port = if ($parts.Count -gt 1) { $parts[1] } else { "2201" }
+
+                Set-Content -Path $ctxFile -Value "server:$hostIp:$port:$srvUser" -Encoding UTF8
+                Write-Host "✔ Context switched to: server ($hostIp`:$port, user: $srvUser)" -ForegroundColor Green
+                Write-Host "   👉 'rig shell' will now connect to this server." -ForegroundColor White
+                Write-Host "   👉 'rig ide .' will open your remote workspace." -ForegroundColor White
+                Write-Host "   👉 Return to local anytime with: rig context use local" -ForegroundColor Cyan
+            }
+        }
+        { $_ -in "list", "ls" } {
+            $curr = Get-ActiveContext
+            Write-Host "Available OpenRig Contexts:" -ForegroundColor White
+            if ($curr -eq "local") {
+                Write-Host "  * local       (Active: Local container on this PC)" -ForegroundColor Green
+            } else {
+                Write-Host "    local       (Local container on this PC)" -ForegroundColor Gray
+            }
+            if ($curr -like "server:*") {
+                $target = $curr -replace '^server:', ''
+                Write-Host "  * server      (Active: $target)" -ForegroundColor Cyan
+            }
+        }
+        default {
+            Write-Host "🎯 OpenRig Context Switcher:" -ForegroundColor Cyan
+            Write-Host "  rig context                             -> Show currently active context (local vs server)"
+            Write-Host "  rig context use local                   -> Target your local container workstation"
+            Write-Host "  rig context use server <ip:port> [user] -> Target remote OpenRig-Server on your network"
+            Write-Host "  rig context list                        -> List configured contexts"
+        }
+    }
+}
+
 function Invoke-Ide {
     $remotePath = if ($ArgsRest.Count -gt 0) { $ArgsRest[0] } else { "/workspace" }
     if ($remotePath -eq ".") { $remotePath = "/workspace" }
     if (-not $remotePath.StartsWith("/")) { $remotePath = "/workspace/$remotePath" }
+
+    $curr = Get-ActiveContext
+    if ($curr -like "server:*") {
+        $target = $curr -replace '^server:', ''
+        $parts = $target -split ":"
+        $hostIp = $parts[0]
+        $port = if ($parts.Count -gt 1) { $parts[1] } else { "2201" }
+        $user = if ($parts.Count -gt 2) { $parts[2] } else { "rig" }
+        Write-Host "📡 Active context is SERVER ($hostIp`:$port). Opening remote workspace..." -ForegroundColor Cyan
+
+        $aliasName = "openrig-$user"
+        $sshHome = Join-Path $HOME ".ssh"
+        if (-not (Test-Path $sshHome)) { New-Item -ItemType Directory -Path $sshHome -Force | Out-Null }
+        $sshConfigFile = Join-Path $sshHome "config"
+        $sshConfigContent = if (Test-Path $sshConfigFile) { Get-Content $sshConfigFile -Raw } else { "" }
+        if ($sshConfigContent -notmatch "Host\s+$aliasName\b") {
+            $aliasBlock = @"
+
+Host $aliasName
+    HostName $hostIp
+    Port $port
+    User $user
+    ForwardAgent yes
+    LocalForward 3000 127.0.0.1:3000
+    LocalForward 5173 127.0.0.1:5173
+    LocalForward 8000 127.0.0.1:8000
+    LocalForward 8080 127.0.0.1:8080
+"@
+            Add-Content -Path $sshConfigFile -Value $aliasBlock
+        }
+
+        $folderUri = "vscode-remote://ssh-remote+$aliasName$remotePath"
+        $codePaths = @(
+            "antigravity-ide",
+            "cursor",
+            "code",
+            "$env:LOCALAPPDATA\Programs\Microsoft VS Code\bin\code.cmd",
+            "$env:LOCALAPPDATA\Programs\cursor\Cursor.exe",
+            "$env:LOCALAPPDATA\Programs\Antigravity IDE\bin\antigravity-ide.cmd"
+        )
+        $ideExecutable = $null
+        foreach ($cand in $codePaths) {
+            if (Get-Command $cand -ErrorAction SilentlyContinue) { $ideExecutable = $cand; break }
+            if (Test-Path $cand) { $ideExecutable = $cand; break }
+        }
+        if ($ideExecutable) {
+            Write-Host "🚀 Launching IDE ($ideExecutable) connected to '$aliasName`:$remotePath'..." -ForegroundColor Cyan
+            Start-Process -FilePath $ideExecutable -ArgumentList "--folder-uri `"$folderUri`""
+        } else {
+            Write-Host "ℹ️ Connect your IDE via Remote-SSH to '$aliasName' and open '$remotePath'." -ForegroundColor Yellow
+        }
+        return
+    }
 
     # Check if openrig container is running
     $running = docker ps --filter "name=^openrig$" --format "{{.Names}}" 2>$null
@@ -416,10 +544,22 @@ switch ($Command.ToLower()) {
     { $_ -in "setup", "init" }       { Invoke-Setup }
     { $_ -in "up", "start" }         { Invoke-Up }
     { $_ -in "shell", "enter" }      {
+        $curr = Get-ActiveContext
+        if ($curr -like "server:*") {
+            $target = $curr -replace '^server:', ''
+            $parts = $target -split ":"
+            $hostIp = $parts[0]
+            $port = if ($parts.Count -gt 1) { $parts[1] } else { "2201" }
+            $user = if ($parts.Count -gt 2) { $parts[2] } else { "rig" }
+            Write-Host "📡 Active context is SERVER ($hostIp`:$port). Connecting..." -ForegroundColor Cyan
+            ssh -A -p $port -L 3000:127.0.0.1:3000 -L 5173:127.0.0.1:5173 -L 8000:127.0.0.1:8000 -L 8080:127.0.0.1:8080 "$user@$hostIp"
+            return
+        }
         $running = docker ps --filter "name=^openrig$" --format "{{.Names}}" 2>$null
         if (-not $running) { Invoke-Up }
         docker exec -it openrig zsh -l
     }
+    { $_ -in "context", "ctx" }      { Invoke-Context }
     { $_ -in "ide", "code", "agy" }  { Invoke-Ide }
     { $_ -in "backup" }              { Invoke-Backup }
     { $_ -in "migrate" }             { Invoke-Migrate }
@@ -489,6 +629,7 @@ switch ($Command.ToLower()) {
         Write-Host "  rig backup create [file.rigpack]  -> Encrypted AES-256 backup of workspace & profiles"
         Write-Host "  rig backup restore <file.rigpack> -> Decrypt and restore backup onto this machine"
         Write-Host "  rig migrate push <server:port>    -> Live stream encrypted workspace to OpenRig-Server"
+        Write-Host "  rig context [show|use|list]       -> Switch active target (local vs remote server)"
         Write-Host "  rig lock / rig unlock             -> Toggle Anti-Malware Sandbox Mode"
         Write-Host "  rig service up/down <svc>         -> Run sibling containers (postgres, redis, localstack)"
         Write-Host "  rig status                        -> View running OpenRig containers"
