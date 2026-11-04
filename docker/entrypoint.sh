@@ -15,6 +15,13 @@ if [ -S /var/run/docker.sock ]; then
     sudo chmod 666 /var/run/docker.sock 2>/dev/null || true
 fi
 
+# Multi-Tenant Sibling Namespacing: Isolate Docker Compose projects per user
+if [ -n "${OPENRIG_USER:-}" ]; then
+    sudo tee /etc/profile.d/openrig-compose.sh >/dev/null << EOF
+export COMPOSE_PROJECT_NAME="openrig-${OPENRIG_USER}"
+EOF
+fi
+
 # Ensure Docker named volumes mounted inside /home/rig belong to user 'rig'
 sudo chown -R rig:rig \
     "${RIG_HOME}/.m2" \
