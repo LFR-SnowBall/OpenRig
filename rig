@@ -1046,6 +1046,49 @@ EOF
     echo -e "   • 1Password / Authenticator URI: ${kc_uri}"
 }
 
+cmd_discover() {
+    echo -e "${CYAN}🔍 Scanning local network for OpenRig Servers (via mDNS & subnet probe)...${RESET}"
+    local candidates=()
+    local my_host
+    my_host=$(hostname -s 2>/dev/null || hostname)
+
+    # 1. Probe common mDNS hostnames on LAN
+    local probe_names=("glados.local" "openrig-server.local" "openrig.local" "${my_host}.local")
+    for name in "${probe_names[@]}"; do
+        if curl -s -m 1 "http://${name}:7070/health" 2>/dev/null | grep -q '"service": *"openrig-gatekeeper"'; then
+            candidates+=("$name")
+        fi
+    done
+
+    # 2. Probe current subnet if none found via direct mDNS
+    if [ ${#candidates[@]} -eq 0 ]; then
+        local local_ip subnet
+        local_ip=$(ipconfig getifaddr en0 2>/dev/null || hostname -I 2>/dev/null | awk '{print $1}')
+        if [ -n "$local_ip" ]; then
+            subnet="${local_ip%.*}"
+            for i in 73 100 101 102 103 104 105 150 200; do
+                local target="${subnet}.${i}"
+                if [ "$target" != "$local_ip" ]; then
+                    if curl -s -m 0.5 "http://${target}:7070/health" 2>/dev/null | grep -q '"service": *"openrig-gatekeeper"'; then
+                        candidates+=("$target")
+                    fi
+                fi
+            done
+        fi
+    fi
+
+    if [ ${#candidates[@]} -gt 0 ]; then
+        echo -e "${GREEN}🎉 Discovered OpenRig Server(s) on your local network:${RESET}"
+        for srv in "${candidates[@]}"; do
+            echo -e "   • ${BOLD}${srv}${RESET} (Gatekeeper: 7070)"
+            echo -e "     👉 Ready to bind: ${CYAN}rig join ${srv}:7070 --token <your_token>${RESET}"
+        done
+    else
+        echo -e "${YELLOW}ℹ️  No OpenRig Server actively responding on port 7070.${RESET}"
+        echo -e "   Make sure OpenRig-Server is running on your remote machine."
+    fi
+}
+
 cmd_guest() {
     local server="${1:?Usage: rig guest <server:7070> --user <username> [--code <6-digit-totp>]}"
     shift || true
@@ -1305,6 +1348,7 @@ case "$ACTION" in
     lock|sandbox)    cmd_lock ;;
     unlock)          cmd_unlock ;;
     join|enroll)     cmd_join "$@" ;;
+    discover|find)   cmd_discover "$@" ;;
     guest)           cmd_guest "$@" ;;
     connect|remote)  cmd_connect "$@" ;;
     status|ps)       cmd_status ;;
