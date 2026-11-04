@@ -1357,7 +1357,7 @@ cmd_connect() {
         DISPLAY=":0" \
         SSH_ASKPASS="$HOME/.openrig/hw-askpass.sh" \
         SSH_ASKPASS_REQUIRE=force \
-        ssh -R 7071:127.0.0.1:7071 -o SetEnv="OPENRIG_HW_ID=${hw_id} OPENRIG_DEVICE_NAME=${dev_name}" "$target" ${ssh_args[@]+"${ssh_args[@]}"}
+        ssh -t -R 7071:127.0.0.1:7071 -o SetEnv="OPENRIG_HW_ID=${hw_id} OPENRIG_DEVICE_NAME=${dev_name}" "$target" ${ssh_args[@]+"${ssh_args[@]}"}
         return 0
     fi
 

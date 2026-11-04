@@ -677,8 +677,13 @@ else
     # Ensure ephemeral RAM projection is bound strictly to this Hardware UUID and wiped on disconnect
     echo "${OPENRIG_HW_ID:-LOCAL}:${DEV_NAME}" > /dev/shm/.personal-core/.session-owner 2>/dev/null || true
     export DEV_NAME
+    [ -z "${TERM:-}" ] || [ "${TERM:-}" = "dumb" ] && export TERM="xterm-256color"
     echo "⚡ [OpenRig Session Takeover] Attaching to your isolated session in /workspace (User: $(hostname) | Device: ${DEV_NAME})..."
-    tmux new-session -A -D -s openrig -c /workspace "zsh -l"
+    if [ -t 0 ] && [ -t 1 ]; then
+        tmux new-session -A -D -s openrig -c /workspace "zsh -l" || exec zsh -l
+    else
+        exec zsh -l
+    fi
     # On SSH disconnect: wipe in-RAM personal projection & personal AI vault so zero personal files/tokens remain on server RAM
     chmod -R u+w /dev/shm/.personal-core /dev/shm/.openrig-ai-personal 2>/dev/null || true
     rm -rf /dev/shm/.personal-core/* /dev/shm/.openrig-ai-personal/* 2>/dev/null || true
