@@ -79,6 +79,11 @@ if [ "${OPENRIG_SSH_SERVER:-false}" = "true" ]; then
         fi
     fi
 
+    sudo mkdir -p /etc/zsh
+    if ! grep -q "cd /workspace" /etc/zsh/zprofile 2>/dev/null; then
+        echo 'if [ -d "/workspace" ] && [ "$PWD" = "$HOME" ]; then cd /workspace; fi' | sudo tee -a /etc/zsh/zprofile >/dev/null
+    fi
+
     sudo /usr/sbin/sshd
 fi
 

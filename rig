@@ -1354,10 +1354,17 @@ cmd_connect() {
                 "chmod -R u+w /dev/shm/.personal-core 2>/dev/null || true; mkdir -p /dev/shm/.personal-core /dev/shm/.personal-core/.outbox; tar -xzf - -C /dev/shm/.personal-core; ln -sfn /dev/shm/.personal-core ~/.brain; mkdir -p ~/.agents; ln -sfn /dev/shm/.personal-core/core/steering/AGENTS.md ~/.agents/AGENTS.md 2>/dev/null || true; for cmd in brain-task brain-graph brain-audit; do printf '#!/usr/bin/env bash\nexec python3 /dev/shm/.personal-core/core/scripts/%s.py \"\$@\"\n' \"\$cmd\" | sudo tee /usr/local/bin/\$cmd >/dev/null && sudo chmod 755 /usr/local/bin/\$cmd; done; find /dev/shm/.personal-core -name '._*' -delete 2>/dev/null || true" >/dev/null 2>&1 || true
         fi
         echo -e "${CYAN}⚡ Connecting to '${target}' with dynamic Motherboard UUID verification & Session Takeover...${RESET}"
+        local fwd_opts=(-R 7071:127.0.0.1:7071)
+        if [ ${#ssh_args[@]} -gt 0 ]; then
+            fwd_opts=(-o ClearAllForwardings=yes)
+            if [ "${ssh_args[*]}" = "zsh" ] || [ "${ssh_args[*]}" = "shell" ]; then
+                ssh_args=("zsh" "-l")
+            fi
+        fi
         DISPLAY=":0" \
         SSH_ASKPASS="$HOME/.openrig/hw-askpass.sh" \
         SSH_ASKPASS_REQUIRE=force \
-        ssh -t -R 7071:127.0.0.1:7071 -o SetEnv="OPENRIG_HW_ID=${hw_id} OPENRIG_DEVICE_NAME=${dev_name}" "$target" ${ssh_args[@]+"${ssh_args[@]}"}
+        ssh -t "${fwd_opts[@]}" -o SetEnv="OPENRIG_HW_ID=${hw_id} OPENRIG_DEVICE_NAME=${dev_name}" "$target" ${ssh_args[@]+"${ssh_args[@]}"}
         return 0
     fi
 
