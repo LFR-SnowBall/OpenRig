@@ -537,10 +537,16 @@ sudo chmod +x /usr/local/bin/rig-share
 sudo tee /etc/tmux.conf >/dev/null << 'TMUX_CONF'
 set -g history-limit 50000
 set -g mouse on
+unbind-key -T copy-mode MouseDragEnd1Pane
+bind-key -T copy-mode MouseDragEnd1Pane send-keys -X copy-pipe-no-clear
+unbind-key -T copy-mode-vi MouseDragEnd1Pane
+bind-key -T copy-mode-vi MouseDragEnd1Pane send-keys -X copy-pipe-no-clear
 set-hook -g client-attached 'run-shell "/usr/local/bin/rig-session-audit attach \"#{client_tty}\" \"#{client_name}\" \"#{client_width}x#{client_height}\" \"#{client_termtype}\""'
 set-hook -g client-detached 'run-shell "/usr/local/bin/rig-session-audit detach \"#{client_tty}\" \"#{client_name}\""'
 set-hook -g client-session-changed 'run-shell "/usr/local/bin/rig-session-audit switch \"#{client_tty}\" \"#{client_name}\" \"#{client_width}x#{client_height}\""'
 TMUX_CONF
+sudo cp /etc/tmux.conf /home/rig/.tmux.conf 2>/dev/null || true
+sudo chown rig:rig /home/rig/.tmux.conf 2>/dev/null || true
 
 sudo tee /usr/local/bin/rig-session-audit >/dev/null << 'EOF'
 #!/usr/bin/env bash
