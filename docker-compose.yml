@@ -23,6 +23,7 @@ services:
     image: openrig:${OPENRIG_ROLE:-custom}
     container_name: ${CONTAINER_NAME:-openrig}
     hostname: openrig
+    init: true
     tty: true
     stdin_open: true
     cap_add:

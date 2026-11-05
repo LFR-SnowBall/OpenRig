@@ -45,6 +45,9 @@ if [ "${OPENRIG_SSH_SERVER:-false}" = "true" ]; then
         echo "AcceptEnv OPENRIG_HW_ID OPENRIG_DEVICE_NAME OPENRIG_SSH_ALIAS" | sudo tee -a /etc/ssh/sshd_config >/dev/null
         echo "PasswordAuthentication no" | sudo tee -a /etc/ssh/sshd_config >/dev/null
         echo "AuthorizedKeysFile /etc/openrig/authorized_keys" | sudo tee -a /etc/ssh/sshd_config >/dev/null
+        echo "MaxStartups 100:30:200" | sudo tee -a /etc/ssh/sshd_config >/dev/null
+        echo "ClientAliveInterval 30" | sudo tee -a /etc/ssh/sshd_config >/dev/null
+        echo "ClientAliveCountMax 5" | sudo tee -a /etc/ssh/sshd_config >/dev/null
     fi
     mkdir -p "${RIG_HOME}/.ssh" "${RIG_HOME}/.openrig-profiles"
     chmod 700 "${RIG_HOME}/.ssh"
