@@ -37,7 +37,11 @@ sudo chown -R rig:rig \
 # 1b. Remote Server Mode: Start OpenSSH Server if OPENRIG_SSH_SERVER=true
 if [ "${OPENRIG_SSH_SERVER:-false}" = "true" ]; then
     sudo mkdir -p /run/sshd /etc/openrig
-    sudo touch /etc/openrig/authorized_keys
+    if [ -f "${RIG_HOME}/.openrig-profiles/authorized_keys" ]; then
+        sudo cp -a "${RIG_HOME}/.openrig-profiles/authorized_keys" /etc/openrig/authorized_keys
+    else
+        sudo touch /etc/openrig/authorized_keys
+    fi
     sudo chown root:root /etc/openrig/authorized_keys
     sudo chmod 644 /etc/openrig/authorized_keys
 

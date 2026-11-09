@@ -50,6 +50,21 @@ class BridgeHandler(http.server.BaseHTTPRequestHandler):
             self.send_response(404)
             self.end_headers()
 
+    def do_POST(self):
+        parsed = urllib.parse.urlparse(self.path)
+        if parsed.path in ("/say", "/voice", "/"):
+            length = int(self.headers.get("Content-Length", 0))
+            text = self.rfile.read(length).decode("utf-8", errors="ignore").strip()
+            if text:
+                subprocess.Popen(["say", "-v", "Paulina", text])
+            self.send_response(200)
+            self.send_header("Content-Type", "text/plain")
+            self.end_headers()
+            self.wfile.write(b"OK\n")
+        else:
+            self.send_response(404)
+            self.end_headers()
+
     def log_message(self, format, *args):
         pass
 
